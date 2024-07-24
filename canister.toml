@@ -1,0 +1,11 @@
+[imports.mops]
+canister_id = "oknww-riaaa-aaaam-qaf6a-cai"
+template = "agent.hbs"
+[imports.mops.bindgen]
+attributes = "#[derive(CandidType, Deserialize, Debug)]"
+
+[imports.storage]
+canister_id = "gl576-4yaaa-aaaam-qapzq-cai"
+template = "agent.hbs"
+[imports.storage.bindgen]
+chunkCount.use_type = "u128 (no test)"
