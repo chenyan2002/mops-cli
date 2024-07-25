@@ -5,6 +5,7 @@ use std::path::PathBuf;
 mod build;
 mod mops;
 mod storage;
+mod toml;
 mod utils;
 
 #[derive(Parser)]
@@ -20,10 +21,13 @@ struct BuildArg {
 
 fn main() -> Result<()> {
     let cmd = ClapCommand::parse();
+    let agent = ic_agent::Agent::builder()
+        .with_url("https://icp0.io")
+        .build()?;
     match cmd {
         ClapCommand::Build(args) => {
             let main = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
-            build::build(&main)?;
+            build::build(&agent, &main)?;
         }
     }
     Ok(())

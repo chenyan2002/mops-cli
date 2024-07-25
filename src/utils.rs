@@ -3,10 +3,7 @@ use indicatif::{MultiProgress, ProgressBar};
 use std::process::Command;
 
 pub fn get_moc() -> Result<Command> {
-    let dfx_cache = Command::new("dfx")
-        .args(["cache", "show"])
-        .output()?
-        .stdout;
+    let dfx_cache = Command::new("dfx").args(["cache", "show"]).output()?.stdout;
     let dfx_cache_path = String::from_utf8_lossy(&dfx_cache).trim().to_string();
     let cmd = Command::new(format!("{}/moc", dfx_cache_path));
     Ok(cmd)

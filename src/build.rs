@@ -1,3 +1,4 @@
+use crate::toml::update_mops_toml;
 use crate::utils::{create_bar, get_moc};
 use crate::{mops, storage};
 use anyhow::{anyhow, Context, Error, Result};
@@ -10,18 +11,22 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
-pub async fn build(main_file: &Path) -> Result<()> {
+pub async fn build(agent: &Agent, main_file: &Path) -> Result<()> {
     let bars = Rc::new(MultiProgress::new());
     let imports = get_imports(main_file)?;
-    let libs = imports.iter().filter_map(|import| {
-        if let MotokoImport::Lib(lib) = import {
-            Some(lib)
-        } else {
-            None
-        }
-    });
-    let agent = Agent::builder().with_url("https://icp0.io").build()?;
-    let service = Rc::new(mops::Service(mops::CANISTER_ID, &agent));
+    let libs: Vec<_> = imports
+        .iter()
+        .filter_map(|import| {
+            if let MotokoImport::Lib(lib) = import {
+                Some(lib)
+            } else {
+                None
+            }
+        })
+        .collect();
+    update_mops_toml(agent, libs).await?;
+    /*
+    let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
     let mut futures = Vec::new();
     for lib in libs {
         futures.push(download_package(
@@ -32,8 +37,10 @@ pub async fn build(main_file: &Path) -> Result<()> {
         ));
     }
     try_join_all(futures).await?;
+    */
     Ok(())
 }
+
 async fn download_package(
     lib: String,
     version: Option<String>,
