@@ -105,7 +105,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                 }
             }
             Mops::Repo { name, repo } => {
-                let repo_info = parse_github_url(&repo)?;
+                let repo_info = parse_github_url(&repo).await?;
                 // TODO fetch mops.toml in the repo
                 Package {
                     name,
