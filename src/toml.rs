@@ -1,4 +1,4 @@
-use crate::github::{parse_github_url, RepoInfo};
+use crate::github::{fetch_file, parse_github_url, RepoInfo};
 use crate::mops;
 use anyhow::{Error, Result};
 use ic_agent::Agent;
@@ -60,7 +60,8 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
         Packages::default()
     };
     let mut map: BTreeMap<_, _> = doc.package.into_iter().map(|p| (p.get_key(), p)).collect();
-    let mops = parse_mops_toml(&Path::new("mops.toml"))?;
+    let str = std::fs::read_to_string(Path::new("mops.toml"))?;
+    let mops = parse_mops_toml(&str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
     let mut queue = mops.into_iter().collect::<VecDeque<_>>();
     while let Some(m) = queue.pop_front() {
@@ -106,19 +107,31 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
             }
             Mops::Repo { name, repo } => {
                 let repo_info = parse_github_url(&repo).await?;
-                // TODO fetch mops.toml in the repo
+                let dependencies = if let Ok(str) = fetch_file(&repo_info, "mops.toml").await {
+                    let mops = parse_mops_toml(&str)?;
+                    mops.into_iter()
+                        .map(|m| {
+                            let key = m.get_key();
+                            queue.push_back(m);
+                            key
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 Package {
                     name,
                     version: None,
                     source: "github".to_string(),
                     repo: Some(repo_info),
-                    dependencies: vec![],
+                    dependencies,
                 }
             }
             Mops::Local { name, path } => {
                 let toml = Path::new(&path).join("mops.toml");
                 let mops = if toml.exists() {
-                    parse_mops_toml(&toml)?
+                    let str = std::fs::read_to_string(toml)?;
+                    parse_mops_toml(&str)?
                 } else {
                     Vec::new()
                 };
@@ -157,8 +170,7 @@ enum Mops {
     Repo { name: String, repo: String },
     Local { name: String, path: String },
 }
-fn parse_mops_toml(mops: &Path) -> Result<Vec<Mops>> {
-    let str = std::fs::read_to_string(mops)?;
+fn parse_mops_toml(str: &str) -> Result<Vec<Mops>> {
     let doc = str.parse::<ImDocument<_>>()?;
     let mut mops = Vec::new();
     if let Some(deps) = doc.get("dependencies") {

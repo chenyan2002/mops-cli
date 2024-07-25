@@ -80,3 +80,21 @@ async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
         .await?;
     Ok(response.sha)
 }
+
+pub async fn fetch_file(repo: &RepoInfo, file: &str) -> Result<String> {
+    let url = format!(
+        "https://raw.githubusercontent.com/{}/{}/{}",
+        repo.repo, repo.commit, file
+    );
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .header("User-Agent", "mops-cli")
+        .send()
+        .await?;
+    let body = response.text().await?;
+    if body.starts_with("404: Not Found") {
+        return Err(anyhow::anyhow!("file not found"));
+    }
+    Ok(body)
+}
