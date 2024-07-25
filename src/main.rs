@@ -3,6 +3,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 mod build;
+mod github;
 mod mops;
 mod storage;
 mod toml;

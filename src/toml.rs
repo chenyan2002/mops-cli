@@ -1,3 +1,4 @@
+use crate::github::{parse_github_url, RepoInfo};
 use crate::mops;
 use anyhow::{Error, Result};
 use ic_agent::Agent;
@@ -6,11 +7,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use toml_edit::{value, DocumentMut, ImDocument};
 
-#[derive(Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Serialize, Deserialize)]
 struct Package {
     name: String,
     version: Option<String>,
     source: String,
+    repo: Option<RepoInfo>,
     dependencies: Vec<String>,
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -98,15 +100,18 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     name,
                     version: Some(version),
                     source,
+                    repo: None,
                     dependencies,
                 }
             }
             Mops::Repo { name, repo } => {
+                let repo_info = parse_github_url(&repo)?;
                 // TODO fetch mops.toml in the repo
                 Package {
                     name,
                     version: None,
-                    source: repo,
+                    source: "github".to_string(),
+                    repo: Some(repo_info),
                     dependencies: vec![],
                 }
             }
@@ -117,10 +122,12 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                 } else {
                     Vec::new()
                 };
+                let source = format!("file://{}", std::fs::canonicalize(path)?.display());
                 Package {
                     name,
                     version: None,
-                    source: path,
+                    source,
+                    repo: None,
                     dependencies: mops
                         .into_iter()
                         .map(|m| {
