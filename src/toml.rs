@@ -57,20 +57,17 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     } else {
         Packages::default()
     };
-    let mut map: BTreeMap<_, _> = doc
-        .package
-        .into_iter()
-        .map(|p| (p.name.clone(), p))
-        .collect();
-    let mops = parse_mops_toml()?;
+    let mut map: BTreeMap<_, _> = doc.package.into_iter().map(|p| (p.get_key(), p)).collect();
+    let mops = parse_mops_toml(&Path::new("mops.toml"))?;
     let service = mops::Service(mops::CANISTER_ID, agent);
     for m in mops.into_iter() {
-        match m {
+        let key = m.get_key();
+        if map.contains_key(&key) {
+            println!("skipping {key}");
+            continue;
+        }
+        let pkg = match m {
             Mops::Mops { name, version } => {
-                if map.contains_key(&name) {
-                    println!("skipping {name}");
-                    continue;
-                }
                 let pkg = service
                     .get_package_details(&name, &version)
                     .await?
@@ -83,24 +80,49 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     .into_iter()
                     .map(|d| {
                         let name = d.name;
-                        /*if d.version.is_empty() {
-                            Mops::Repo{ name, repo: d.repo }
+                        let mops = if d.version.is_empty() {
+                            Mops::Repo { name, repo: d.repo }
                         } else {
-                            Mops::Mops{ name, version: d.version }
-                        };*/
-                        name
+                            Mops::Mops {
+                                name,
+                                version: d.version,
+                            }
+                        };
+                        mops.get_key()
                     })
                     .collect();
-                let pkg = Package {
-                    name: name.clone(),
+                Package {
+                    name,
                     version: Some(version),
                     source,
                     dependencies,
-                };
-                map.insert(name, pkg);
+                }
             }
-            _ => (),
-        }
+            Mops::Repo { name, repo } => {
+                // TODO fetch mops.toml in the repo
+                Package {
+                    name,
+                    version: None,
+                    source: repo,
+                    dependencies: vec![],
+                }
+            }
+            Mops::Local { name, path } => {
+                let toml = Path::new(&path).join("mops.toml");
+                let mops = if toml.exists() {
+                    parse_mops_toml(&toml)?
+                } else {
+                    Vec::new()
+                };
+                Package {
+                    name,
+                    version: None,
+                    source: path,
+                    dependencies: mops.into_iter().map(|m| m.get_key()).collect(),
+                }
+            }
+        };
+        map.insert(pkg.get_key(), pkg);
     }
     let mut res = DocumentMut::new();
     let mut array = toml_edit::ArrayOfTables::new();
@@ -118,8 +140,7 @@ enum Mops {
     Repo { name: String, repo: String },
     Local { name: String, path: String },
 }
-fn parse_mops_toml() -> Result<Vec<Mops>> {
-    let mops = Path::new("mops.toml");
+fn parse_mops_toml(mops: &Path) -> Result<Vec<Mops>> {
     let str = std::fs::read_to_string(mops)?;
     let doc = str.parse::<ImDocument<_>>()?;
     let mut mops = Vec::new();
@@ -152,4 +173,22 @@ fn parse_mops_toml() -> Result<Vec<Mops>> {
         }
     }
     Ok(mops)
+}
+impl Package {
+    fn get_key(&self) -> String {
+        if let Some(ver) = &self.version {
+            format!("{}@{}", self.name, ver)
+        } else {
+            format!("{}@{}", self.name, self.source)
+        }
+    }
+}
+impl Mops {
+    fn get_key(&self) -> String {
+        match self {
+            Mops::Mops { name, version } => format!("{name}@{version}"),
+            Mops::Repo { name, repo } => format!("{name}@{repo}"),
+            Mops::Local { name, path } => format!("{name}@{path}"),
+        }
+    }
 }
