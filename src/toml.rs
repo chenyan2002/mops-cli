@@ -2,7 +2,7 @@ use crate::mops;
 use anyhow::{Error, Result};
 use ic_agent::Agent;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::Path;
 use toml_edit::{value, DocumentMut, ImDocument};
 
@@ -15,7 +15,7 @@ struct Package {
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Packages {
-    package: BTreeSet<Package>,
+    package: Vec<Package>,
 }
 
 pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
@@ -50,18 +50,27 @@ pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
 }
 async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let lock = Path::new("mops.lock");
-    let mut doc = if lock.exists() {
+    let doc = if lock.exists() {
         let str = std::fs::read_to_string(lock)?;
         let doc = str.parse::<ImDocument<_>>()?;
         toml_edit::de::from_document::<Packages>(doc)?
     } else {
         Packages::default()
     };
+    let mut map: BTreeMap<_, _> = doc
+        .package
+        .into_iter()
+        .map(|p| (p.name.clone(), p))
+        .collect();
     let mops = parse_mops_toml()?;
     let service = mops::Service(mops::CANISTER_ID, agent);
     for m in mops.into_iter() {
         match m {
             Mops::Mops { name, version } => {
+                if map.contains_key(&name) {
+                    println!("skipping {name}");
+                    continue;
+                }
                 let pkg = service
                     .get_package_details(&name, &version)
                     .await?
@@ -83,20 +92,20 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     })
                     .collect();
                 let pkg = Package {
-                    name,
+                    name: name.clone(),
                     version: Some(version),
                     source,
                     dependencies,
                 };
-                doc.package.insert(pkg);
+                map.insert(name, pkg);
             }
             _ => (),
         }
     }
     let mut res = DocumentMut::new();
     let mut array = toml_edit::ArrayOfTables::new();
-    for p in doc.package {
-        let d = toml_edit::ser::to_document(&p)?;
+    for p in map.values() {
+        let d = toml_edit::ser::to_document(p)?;
         array.push(d.as_table().clone());
     }
     res.insert("package", toml_edit::Item::ArrayOfTables(array));
