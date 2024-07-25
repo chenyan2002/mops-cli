@@ -2,7 +2,7 @@ use crate::mops;
 use anyhow::{Error, Result};
 use ic_agent::Agent;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use toml_edit::{value, DocumentMut, ImDocument};
 
@@ -60,7 +60,8 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let mut map: BTreeMap<_, _> = doc.package.into_iter().map(|p| (p.get_key(), p)).collect();
     let mops = parse_mops_toml(&Path::new("mops.toml"))?;
     let service = mops::Service(mops::CANISTER_ID, agent);
-    for m in mops.into_iter() {
+    let mut queue = mops.into_iter().collect::<VecDeque<_>>();
+    while let Some(m) = queue.pop_front() {
         let key = m.get_key();
         if map.contains_key(&key) {
             println!("skipping {key}");
@@ -88,7 +89,9 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                                 version: d.version,
                             }
                         };
-                        mops.get_key()
+                        let key = mops.get_key();
+                        queue.push_back(mops);
+                        key
                     })
                     .collect();
                 Package {
@@ -118,7 +121,14 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     name,
                     version: None,
                     source: path,
-                    dependencies: mops.into_iter().map(|m| m.get_key()).collect(),
+                    dependencies: mops
+                        .into_iter()
+                        .map(|m| {
+                            let key = m.get_key();
+                            queue.push_back(m);
+                            key
+                        })
+                        .collect(),
                 }
             }
         };
