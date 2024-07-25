@@ -2,8 +2,21 @@ use crate::mops;
 use anyhow::{Error, Result};
 use ic_agent::Agent;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::Path;
 use toml_edit::{value, DocumentMut, ImDocument};
+
+#[derive(Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq)]
+struct Package {
+    name: String,
+    version: Option<String>,
+    source: String,
+    dependencies: Vec<String>,
+}
+#[derive(Default, Serialize, Deserialize)]
+struct Packages {
+    package: BTreeSet<Package>,
+}
 
 pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
     let mops = Path::new("mops.toml");
@@ -32,8 +45,62 @@ pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
         }
     }
     std::fs::write(mops, doc.to_string())?;
+    update_mops_lock(agent).await?;
+    Ok(())
+}
+async fn update_mops_lock(agent: &Agent) -> Result<()> {
+    let lock = Path::new("mops.lock");
+    let mut doc = if lock.exists() {
+        let str = std::fs::read_to_string(lock)?;
+        let doc = str.parse::<ImDocument<_>>()?;
+        toml_edit::de::from_document::<Packages>(doc)?
+    } else {
+        Packages::default()
+    };
     let mops = parse_mops_toml()?;
-    collect_dependencies(agent, mops).await?;
+    let service = mops::Service(mops::CANISTER_ID, agent);
+    for m in mops.into_iter() {
+        match m {
+            Mops::Mops { name, version } => {
+                let pkg = service
+                    .get_package_details(&name, &version)
+                    .await?
+                    .into_result()
+                    .map_err(Error::msg)?;
+                let source = pkg.publication.storage.to_string();
+                let dependencies = pkg
+                    .config
+                    .dependencies
+                    .into_iter()
+                    .map(|d| {
+                        let name = d.name;
+                        /*if d.version.is_empty() {
+                            Mops::Repo{ name, repo: d.repo }
+                        } else {
+                            Mops::Mops{ name, version: d.version }
+                        };*/
+                        name
+                    })
+                    .collect();
+                let pkg = Package {
+                    name,
+                    version: Some(version),
+                    source,
+                    dependencies,
+                };
+                doc.package.insert(pkg);
+            }
+            _ => (),
+        }
+    }
+    let mut res = DocumentMut::new();
+    let mut array = toml_edit::ArrayOfTables::new();
+    for p in doc.package {
+        let d = toml_edit::ser::to_document(&p)?;
+        array.push(d.as_table().clone());
+    }
+    res.insert("package", toml_edit::Item::ArrayOfTables(array));
+    println!("{}", res.to_string());
     Ok(())
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -76,57 +143,4 @@ fn parse_mops_toml() -> Result<Vec<Mops>> {
         }
     }
     Ok(mops)
-}
-#[derive(Serialize, Deserialize)]
-struct Package {
-    name: String,
-    version: String,
-    source: String,
-    dependencies: Vec<String>,
-}
-async fn collect_dependencies(agent: &Agent, mops: Vec<Mops>) -> Result<()> {
-    let service = mops::Service(mops::CANISTER_ID, agent);
-    let mut res = Vec::new();
-    for m in mops.into_iter() {
-        match m {
-            Mops::Mops { name, version } => {
-                let pkg = service
-                    .get_package_details(&name, &version)
-                    .await?
-                    .into_result()
-                    .map_err(Error::msg)?;
-                let source = pkg.publication.storage.to_string();
-                let dependencies = pkg
-                    .config
-                    .dependencies
-                    .into_iter()
-                    .map(|d| {
-                        let name = d.name;
-                        /*if d.version.is_empty() {
-                            Mops::Repo{ name, repo: d.repo }
-                        } else {
-                            Mops::Mops{ name, version: d.version }
-                        };*/
-                        name
-                    })
-                    .collect();
-                res.push(Package {
-                    name,
-                    version: version,
-                    source,
-                    dependencies,
-                });
-            }
-            _ => (),
-        }
-    }
-    let mut doc = DocumentMut::new();
-    let mut array = toml_edit::ArrayOfTables::new();
-    for p in res {
-        let doc = toml_edit::ser::to_document(&p)?;
-        array.push(doc.as_table().clone());
-    }
-    doc.insert("package", toml_edit::Item::ArrayOfTables(array));
-    println!("{}", doc.to_string());
-    Ok(())
 }
