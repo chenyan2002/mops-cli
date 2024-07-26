@@ -11,7 +11,7 @@ use std::path::Path;
 use std::rc::Rc;
 use toml_edit::{value, DocumentMut, ImDocument};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Package {
     name: String,
     version: Option<String>,
@@ -74,12 +74,8 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
         .progress_chars("=> "),
     );
     let mut queue = mops.into_iter().collect::<VecDeque<_>>();
+    // TODO: maintain a map between mops to resolved package.get_key, so we can rewrite dependencies entry at the end
     while let Some(m) = queue.pop_front() {
-        /*let key = m.get_key();
-        if map.contains_key(&key) {
-            bar.inc(1);
-            continue;
-        }*/
         let pkg = match m {
             Mops::Mops { name, version } => {
                 bar.set_message(name.clone());
@@ -130,6 +126,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                 }
                 let dependencies = if let Ok(str) = fetch_file(&repo_info, "mops.toml").await {
                     let mops = parse_mops_toml(&str)?;
+                    // TODO remove Mops::Local
                     mops.into_iter()
                         .map(|m| {
                             let key = m.get_display_key();
@@ -181,7 +178,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                 }
             }
         };
-        map.insert(pkg.get_key(), pkg);
+        assert!(map.insert(pkg.get_key(), pkg).is_none());
         bar.inc(1);
     }
     bar.finish_and_clear();
@@ -208,20 +205,20 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
     let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
     let mut futures = Vec::new();
     for pkg in lock.package {
-        if pkg.source.starts_with("file://") {
-        } else if pkg.source == "github" {
-            let path = root.join("github").join(pkg.get_key());
-            println!("{}", path.display());
-        } else {
-            let path = root.join("mops").join(pkg.get_key());
-            println!("{}", path.display());
-            let id = Principal::from_text(pkg.source)?;
-            futures.push(download_mops_package(
-                pkg.name,
-                pkg.version.unwrap(),
-                service.clone(),
-                id,
-            ));
+        let subpath = pkg.get_path();
+        let path = root.join(subpath);
+        println!("{}", path.display());
+        match pkg.get_type() {
+            PackageType::Mops { id, .. } => {
+                let id = Principal::from_text(id)?;
+                futures.push(download_mops_package(
+                    pkg.name,
+                    pkg.version.unwrap(),
+                    service.clone(),
+                    id,
+                ));
+            }
+            _ => (),
         }
     }
     try_join_all(futures).await?;
@@ -304,15 +301,38 @@ fn parse_mops_toml(str: &str) -> Result<Vec<Mops>> {
     }
     Ok(mops)
 }
+enum PackageType<'a> {
+    Mops { ver: &'a str, id: &'a str },
+    Local(&'a str),
+    Repo(&'a RepoInfo),
+}
 impl Package {
-    fn get_key(&self) -> String {
-        if let Some(ver) = &self.version {
-            format!("{}-{}", self.name, ver)
-        } else if self.source == "github" {
-            format!("{}-{}", self.name, self.repo.as_ref().unwrap().commit)
-        } else {
+    fn get_type(&self) -> PackageType {
+        if self.source.starts_with("file://") {
             let local = self.source.strip_prefix("file://").unwrap();
-            format!("{}-{}", self.name, local)
+            PackageType::Local(local)
+        } else if self.source == "github" {
+            PackageType::Repo(self.repo.as_ref().unwrap())
+        } else {
+            PackageType::Mops {
+                ver: self.version.as_ref().unwrap(),
+                id: &self.source,
+            }
+        }
+    }
+    fn get_key(&self) -> String {
+        // Make sure this is the same logic as used in update_mops_lock
+        match self.get_type() {
+            PackageType::Mops { ver, .. } => format!("{}-{}", self.name, ver),
+            PackageType::Repo(repo) => format!("{}-{}", self.name, repo.commit),
+            PackageType::Local(local) => format!("{}-{}", self.name, local),
+        }
+    }
+    fn get_path(&self) -> String {
+        match self.get_type() {
+            PackageType::Mops { ver, .. } => format!("registry/{}-{}", self.name, ver),
+            PackageType::Repo(repo) => format!("git/{}-{}", self.name, &repo.commit[..8]),
+            PackageType::Local(local) => local.to_string(),
         }
     }
 }
