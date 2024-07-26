@@ -54,13 +54,8 @@ async fn get_default_branch(repo: &str) -> Result<String> {
         default_branch: String,
     }
     let url = format!("https://api.github.com/repos/{}", repo);
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("User-Agent", "mops-cli")
-        .send()
-        .await?;
-    let response = response.json::<Branch>().await?;
+    let body = github_request(&url).await?;
+    let response = serde_json::from_str::<Branch>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
     Ok(response.default_branch)
 }
 
@@ -70,14 +65,8 @@ async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
         sha: String,
     }
     let url = format!("https://api.github.com/repos/{}/commits/{}", repo, tag);
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("User-Agent", "mops-cli")
-        .send()
-        .await?
-        .json::<Commit>()
-        .await?;
+    let body = github_request(&url).await?;
+    let response = serde_json::from_str::<Commit>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
     Ok(response.sha)
 }
 
@@ -86,15 +75,20 @@ pub async fn fetch_file(repo: &RepoInfo, file: &str) -> Result<String> {
         "https://raw.githubusercontent.com/{}/{}/{}",
         repo.repo, repo.commit, file
     );
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("User-Agent", "mops-cli")
-        .send()
-        .await?;
-    let body = response.text().await?;
+    let body = github_request(&url).await?;
     if body.starts_with("404: Not Found") {
         return Err(anyhow::anyhow!("file not found"));
     }
+    Ok(body)
+}
+
+async fn github_request(url: &str) -> Result<String> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(url).header("User-Agent", "mops-cli");
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+    let response = request.send().await?;
+    let body = response.text().await?;
     Ok(body)
 }

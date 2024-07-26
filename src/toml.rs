@@ -2,6 +2,7 @@ use crate::github::{fetch_file, parse_github_url, RepoInfo};
 use crate::mops;
 use anyhow::{Error, Result};
 use ic_agent::Agent;
+use indicatif::{style::ProgressStyle, ProgressBar};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
@@ -63,6 +64,10 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let str = std::fs::read_to_string(Path::new("mops.toml"))?;
     let mops = parse_mops_toml(&str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
+    let bar = ProgressBar::new(mops.len() as u64).with_style(
+        ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57.green}] {pos}/{len} {msg}")?
+            .progress_chars("=> "),
+    );
     let mut queue = mops.into_iter().collect::<VecDeque<_>>();
     while let Some(m) = queue.pop_front() {
         let key = m.get_key();
@@ -72,6 +77,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
         }
         let pkg = match m {
             Mops::Mops { name, version } => {
+                bar.set_message(name.clone());
                 let pkg = service
                     .get_package_details(&name, &version)
                     .await?
@@ -92,6 +98,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                                 version: d.version,
                             }
                         };
+                        bar.inc_length(1);
                         let key = mops.get_key();
                         queue.push_back(mops);
                         key
@@ -106,12 +113,14 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                 }
             }
             Mops::Repo { name, repo } => {
+                bar.set_message(name.clone());
                 let repo_info = parse_github_url(&repo).await?;
                 let dependencies = if let Ok(str) = fetch_file(&repo_info, "mops.toml").await {
                     let mops = parse_mops_toml(&str)?;
                     mops.into_iter()
                         .map(|m| {
                             let key = m.get_key();
+                            bar.inc_length(1);
                             queue.push_back(m);
                             key
                         })
@@ -128,6 +137,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                 }
             }
             Mops::Local { name, path } => {
+                bar.set_message(name.clone());
                 let toml = Path::new(&path).join("mops.toml");
                 let mops = if toml.exists() {
                     let str = std::fs::read_to_string(toml)?;
@@ -145,6 +155,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                         .into_iter()
                         .map(|m| {
                             let key = m.get_key();
+                            bar.inc_length(1);
                             queue.push_back(m);
                             key
                         })
@@ -153,7 +164,9 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
             }
         };
         map.insert(pkg.get_key(), pkg);
+        bar.inc(1);
     }
+    bar.finish_and_clear();
     let mut res = DocumentMut::new();
     let mut array = toml_edit::ArrayOfTables::new();
     for p in map.values() {
