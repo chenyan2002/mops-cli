@@ -1,18 +1,13 @@
-use crate::toml::update_mops_toml;
-use crate::utils::{create_bar, get_moc};
-use crate::{mops, storage};
-use anyhow::{anyhow, Context, Error, Result};
+use crate::toml::{download_packages_from_lock, update_mops_toml};
+use crate::utils::get_moc;
+use anyhow::{anyhow, Context, Result};
 use candid::Principal;
-use futures::{future::try_join_all, try_join};
 use ic_agent::Agent;
-use indicatif::MultiProgress;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 pub async fn build(agent: &Agent, main_file: &Path) -> Result<()> {
-    let bars = Rc::new(MultiProgress::new());
     let imports = get_imports(main_file)?;
     let libs: Vec<_> = imports
         .iter()
@@ -25,69 +20,8 @@ pub async fn build(agent: &Agent, main_file: &Path) -> Result<()> {
         })
         .collect();
     update_mops_toml(agent, libs).await?;
-    /*
-    let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
-    let mut futures = Vec::new();
-    for lib in libs {
-        futures.push(download_package(
-            lib.to_string(),
-            None,
-            service.clone(),
-            bars.clone(),
-        ));
-    }
-    try_join_all(futures).await?;
-    */
+    download_packages_from_lock(agent, &Path::new(".mops")).await?;
     Ok(())
-}
-
-async fn download_package(
-    lib: String,
-    version: Option<String>,
-    service: Rc<mops::Service<'_>>,
-    bars: Rc<MultiProgress>,
-) -> Result<()> {
-    let version = match version {
-        Some(version) => version,
-        None => service
-            .get_highest_version(&lib)
-            .await?
-            .into_result()
-            .map_err(Error::msg)?,
-    };
-    let bar = create_bar(&bars, format!("Downloading {} {}", lib, version));
-    let (ids, pkg) = try_join!(
-        service.get_file_ids(&lib, &version),
-        service.get_package_details(&lib, &version)
-    )?;
-    let ids = ids.into_result().map_err(Error::msg)?;
-    let pkg = pkg.into_result().map_err(Error::msg)?;
-    let mut futures = Vec::new();
-    let storage = Rc::new(storage::Service(pkg.publication.storage, service.1));
-    for id in ids {
-        futures.push(download_file(id, storage.clone()));
-    }
-    try_join_all(futures).await?;
-    bar.finish_with_message(format!("Downloaded {} {}", lib, version));
-    Ok(())
-}
-async fn download_file(id: String, storage: Rc<storage::Service<'_>>) -> Result<(String, Vec<u8>)> {
-    let meta = storage
-        .get_file_meta(&id)
-        .await?
-        .into_result()
-        .map_err(Error::msg)?;
-    let mut blob = Vec::new();
-    for i in 0..meta.chunk_count {
-        let chunk = storage
-            .download_chunk(&id, &i.into())
-            .await?
-            .into_result()
-            .map_err(Error::msg)?;
-        blob.extend(chunk);
-    }
-    //println!("{} {}", meta.path, blob.len());
-    Ok((meta.path, blob))
 }
 
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq)]
