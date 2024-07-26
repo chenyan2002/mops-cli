@@ -72,7 +72,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     while let Some(m) = queue.pop_front() {
         let key = m.get_key();
         if map.contains_key(&key) {
-            println!("skipping {key}");
+            bar.inc(1);
             continue;
         }
         let pkg = match m {
@@ -174,7 +174,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
         array.push(d.as_table().clone());
     }
     res.insert("package", toml_edit::Item::ArrayOfTables(array));
-    println!("{}", res.to_string());
+    std::fs::write(lock, res.to_string())?;
     Ok(())
 }
 #[derive(Debug, Serialize, Deserialize)]
