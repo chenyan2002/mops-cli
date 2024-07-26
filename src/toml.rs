@@ -1,10 +1,9 @@
 use crate::github::{fetch_file, parse_github_url, RepoInfo};
-use crate::{mops, storage};
+use crate::{mops, storage, utils::create_bar};
 use anyhow::{Error, Result};
 use candid::Principal;
 use futures::future::try_join_all;
 use ic_agent::Agent;
-use indicatif::{style::ProgressStyle, ProgressBar};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
@@ -67,12 +66,8 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let str = std::fs::read_to_string(Path::new("mops.toml"))?;
     let mops = parse_mops_toml(&str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
-    let bar = ProgressBar::new(mops.len() as u64).with_style(
-        ProgressStyle::with_template(
-            "Updating mops.lock {prefix:>12.cyan.bold} [{bar:57.green}] {pos}/{len} {msg}",
-        )?
-        .progress_chars("=> "),
-    );
+    let bar = create_bar(mops.len() as u64);
+    bar.set_prefix("Updating mops.lock");
     let mut queue = mops.into_iter().collect::<VecDeque<_>>();
     // TODO: maintain a map between mops to resolved package.get_key, so we can rewrite dependencies entry at the end
     while let Some(m) = queue.pop_front() {
@@ -262,6 +257,7 @@ async fn download_file(id: String, storage: Rc<storage::Service<'_>>) -> Result<
     //println!("{} {}", meta.path, blob.len());
     Ok((meta.path, blob))
 }
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Serialize, Deserialize)]
 enum Mops {
     Mops { name: String, version: String },
@@ -330,7 +326,7 @@ impl Package {
     }
     fn get_path(&self) -> String {
         match self.get_type() {
-            PackageType::Mops { ver, .. } => format!("registry/{}-{}", self.name, ver),
+            PackageType::Mops { ver, .. } => format!("mops/{}-{}", self.name, ver),
             PackageType::Repo(repo) => format!("git/{}-{}", self.name, &repo.commit[..8]),
             PackageType::Local(local) => local.to_string(),
         }

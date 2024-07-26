@@ -20,7 +20,7 @@ pub async fn build(agent: &Agent, main_file: &Path) -> Result<()> {
         })
         .collect();
     update_mops_toml(agent, libs).await?;
-    download_packages_from_lock(agent, &Path::new(".mops")).await?;
+    download_packages_from_lock(agent, Path::new(".mops")).await?;
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use indicatif::{MultiProgress, ProgressBar};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::process::Command;
 
 pub fn get_moc() -> Result<Command> {
@@ -9,6 +9,14 @@ pub fn get_moc() -> Result<Command> {
     Ok(cmd)
 }
 
+pub fn create_bar(len: u64) -> ProgressBar {
+    ProgressBar::new(len).with_style(
+        ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57.green}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("=> "),
+    )
+}
+/*
 pub fn create_bar(
     bars: &MultiProgress,
     msg: impl Into<std::borrow::Cow<'static, str>>,
@@ -18,3 +26,4 @@ pub fn create_bar(
     pb.set_message(msg);
     pb
 }
+*/
