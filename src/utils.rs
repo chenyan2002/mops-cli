@@ -9,8 +9,8 @@ pub fn get_moc() -> Result<Command> {
     Ok(cmd)
 }
 
-pub fn create_bar(len: u64) -> ProgressBar {
-    ProgressBar::new(len).with_style(
+pub fn create_bar(len: usize) -> ProgressBar {
+    ProgressBar::new(len as u64).with_style(
         ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57.green}] {pos}/{len} {msg}")
             .unwrap()
             .progress_chars("=> "),
