@@ -63,7 +63,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let pkgs = parse_mops_lock(lock).unwrap_or_default();
     let mut map: BTreeMap<_, _> = pkgs.into_iter().map(|p| (p.get_key(), p)).collect();
     let str = fs::read_to_string(Path::new("mops.toml"))?;
-    let mops = parse_mops_toml(&str)?;
+    let mops = parse_mops_toml(&str)?.dependencies;
     let service = mops::Service(mops::CANISTER_ID, agent);
     let bar = create_bar(mops.len());
     bar.set_prefix("Updating mops.lock");
@@ -120,10 +120,13 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     bar.inc(1);
                     continue;
                 }
+                let mut version = None;
                 let dependencies = if let Ok(str) = fetch_file(&repo_info, "mops.toml").await {
                     let mops = parse_mops_toml(&str)?;
+                    version = mops.version;
                     // TODO remove Mops::Local
-                    mops.into_iter()
+                    mops.dependencies
+                        .into_iter()
                         .map(|m| {
                             let key = m.get_display_key();
                             bar.inc_length(1);
@@ -134,9 +137,12 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                 } else {
                     Vec::new()
                 };
+                if version.is_none() {
+                    version = repo_info.guess_version();
+                }
                 Package {
                     name,
-                    version: None,
+                    version,
                     source: "github".to_string(),
                     base_dir: repo_info.base_dir.clone(),
                     repo: Some(repo_info),
@@ -152,15 +158,18 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     continue;
                 }
                 let source = format!("file://{}", canonicalized.display());
+                let mut version = None;
                 let mops = if toml.exists() {
                     let str = fs::read_to_string(toml)?;
-                    parse_mops_toml(&str)?
+                    let mops = parse_mops_toml(&str)?;
+                    version = mops.version;
+                    mops.dependencies
                 } else {
                     Vec::new()
                 };
                 Package {
                     name,
-                    version: None,
+                    version,
                     source,
                     base_dir: "src".to_string(),
                     repo: None,
@@ -254,7 +263,7 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
         bar.set_message(pkg.name.clone());
         let subpath = pkg.get_path();
         let path = root.join(subpath);
-        if path.join("DONE").exists() {
+        if path.join(pkg.get_done_file()).exists() {
             bar.inc(1);
             continue;
         }
@@ -345,9 +354,20 @@ enum Mops {
     Repo { name: String, repo: String },
     Local { name: String, path: String },
 }
-fn parse_mops_toml(str: &str) -> Result<Vec<Mops>> {
+#[derive(Debug)]
+struct MopsConfig {
+    version: Option<String>,
+    dependencies: Vec<Mops>,
+}
+fn parse_mops_toml(str: &str) -> Result<MopsConfig> {
     let doc = str.parse::<ImDocument<_>>()?;
     let mut mops = Vec::new();
+    let mut version = None;
+    if let Some(pkg) = doc.get("package") {
+        if let Some(ver) = pkg.get("version") {
+            version = Some(ver.as_value().unwrap().as_str().unwrap().to_string());
+        }
+    }
     if let Some(deps) = doc.get("dependencies") {
         let deps = deps
             .as_table()
@@ -376,7 +396,10 @@ fn parse_mops_toml(str: &str) -> Result<Vec<Mops>> {
             }
         }
     }
-    Ok(mops)
+    Ok(MopsConfig {
+        version,
+        dependencies: mops,
+    })
 }
 fn parse_mops_lock(lock: &Path) -> Result<Vec<Package>> {
     let str = fs::read_to_string(lock)?;
@@ -414,8 +437,19 @@ impl Package {
     fn get_path(&self) -> String {
         match self.get_type() {
             PackageType::Mops { ver, .. } => format!("mops/{}-{}", self.name, ver),
-            PackageType::Repo(repo) => format!("git/{}-{}", self.name, &repo.commit[..8]),
+            PackageType::Repo(repo) => {
+                let repo_name = repo.repo.replace('/', "-");
+                format!("git/{}/{}", repo_name, &repo.commit[..8])
+            }
             PackageType::Local(local) => local.to_string(),
+        }
+    }
+    fn get_done_file(&self) -> String {
+        // Make sure this returns the same name as each download function
+        match self.get_type() {
+            PackageType::Mops { .. } => "DONE".to_string(),
+            PackageType::Repo(repo) => repo.get_done_file(),
+            PackageType::Local(_) => "".to_string(),
         }
     }
 }

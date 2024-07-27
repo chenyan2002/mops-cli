@@ -2,6 +2,7 @@ use anyhow::Result;
 use console::style;
 use futures::future::try_join_all;
 use indicatif::ProgressBar;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -70,7 +71,7 @@ pub async fn download_github_package(
         futures.push(download_file(base_path.clone(), repo.clone(), file));
     }
     try_join_all(futures).await?;
-    fs::write(base_path.join("DONE"), "")?;
+    fs::write(base_path.join(repo.get_done_file()), "")?;
     bar.println(format!(
         "{:>12} {}@{}",
         style("Downloaded").green().bold(),
@@ -160,4 +161,18 @@ async fn github_request(url: &str) -> Result<String> {
     let response = request.send().await?;
     let body = response.text().await?;
     Ok(body)
+}
+impl RepoInfo {
+    pub fn get_done_file(&self) -> String {
+        format!("DONE-{}", self.base_dir.replace('/', "-"))
+    }
+    pub fn guess_version(&self) -> Option<String> {
+        let idx = self.tag.find(|c: char| c.is_ascii_digit())?;
+        let maybe = &self.tag[idx..];
+        if maybe.parse::<Version>().is_ok() {
+            Some(maybe.to_string())
+        } else {
+            None
+        }
+    }
 }
