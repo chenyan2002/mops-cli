@@ -1,4 +1,5 @@
 use anyhow::Result;
+use console::style;
 use futures::future::try_join_all;
 use indicatif::ProgressBar;
 use serde::{Deserialize, Serialize};
@@ -70,7 +71,12 @@ pub async fn download_github_package(
     }
     try_join_all(futures).await?;
     fs::write(base_path.join("DONE"), "")?;
-    bar.println(format!("{:>12} {}@{}", "Downloaded", repo.repo, repo.tag));
+    bar.println(format!(
+        "{:>12} {}@{}",
+        style("Downloaded").green().bold(),
+        repo.repo,
+        repo.tag
+    ));
     bar.inc(1);
     Ok(())
 }

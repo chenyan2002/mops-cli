@@ -7,6 +7,7 @@ edition = "2021"
 anyhow = "1.0.86"
 candid = "0.10.9"
 clap = { version = "4.5.9", features = ["derive"] }
+console = "0.15.8"
 futures = "0.3.30"
 ic-agent = "0.36.0"
 indicatif = "0.17.8"

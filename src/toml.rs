@@ -2,6 +2,7 @@ use crate::github::{download_github_package, fetch_file, parse_github_url, RepoI
 use crate::{mops, storage, utils::create_bar};
 use anyhow::{anyhow, Error, Result};
 use candid::Principal;
+use console::style;
 use futures::future::try_join_all;
 use ic_agent::Agent;
 use indicatif::ProgressBar;
@@ -222,7 +223,11 @@ fn parse_version(ver: &str) -> Option<Version> {
 fn resolve_error(p1: &Package, p2: &Package) -> String {
     let p1 = toml_edit::ser::to_string(p1).unwrap();
     let p2 = toml_edit::ser::to_string(p2).unwrap();
-    format!("Version conflict:\n{p1}\nand\n\n{p2}")
+    format!(
+        "Version conflict:\n{}\nand\n\n{}",
+        style(&p1).green(),
+        style(&p2).green()
+    )
 }
 pub fn generate_moc_args(base_path: &Path) -> Vec<String> {
     let pkgs = parse_mops_lock(Path::new("mops.lock")).unwrap_or_default();
@@ -302,7 +307,10 @@ async fn download_mops_package(
     }
     try_join_all(futures).await?;
     fs::write(base_path.join("DONE"), "")?;
-    bar.println(format!("{:>12} {lib}@{version}", "Downloaded"));
+    bar.println(format!(
+        "{:>12} {lib}@{version}",
+        style("Downloaded").green().bold()
+    ));
     bar.inc(1);
     Ok(())
 }

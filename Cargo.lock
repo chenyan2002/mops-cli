@@ -1239,6 +1239,7 @@ dependencies = [
  "anyhow",
  "candid",
  "clap",
+ "console",
  "futures",
  "ic-agent",
  "indicatif",

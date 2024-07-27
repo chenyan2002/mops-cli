@@ -2,6 +2,7 @@ use crate::toml::{download_packages_from_lock, generate_moc_args, update_mops_to
 use crate::utils::{create_spinner_bar, exec, get_moc};
 use anyhow::{anyhow, Context, Result};
 use candid::Principal;
+use console::style;
 use ic_agent::Agent;
 use indicatif::HumanDuration;
 use std::collections::BTreeSet;
@@ -30,20 +31,21 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     }
     let lock_time = start.elapsed();
     let pkgs = generate_moc_args(&cache_dir);
-    let bar = create_spinner_bar(format!("Compiling {}...", main_file.display()));
+    let msg = format!("{} {}", style("Compiling").cyan(), main_file.display());
+    let bar = create_spinner_bar(msg);
     let mut moc = get_moc()?;
     moc.arg(&main_file).args(pkgs);
     exec(moc, &bar)?;
     bar.finish_and_clear();
     let mut msg = format!(
-        "{:>12} building {} in {}",
-        "Finished",
+        "{:>12} {} in {}",
+        style("Compiled").green().bold(),
         main_file.display(),
         HumanDuration(start.elapsed())
     );
     if !args.lock {
         msg.push_str(&format!(
-            " ({} to download packages)",
+            " ({} to analyze dependencies)",
             HumanDuration(lock_time)
         ));
     }
