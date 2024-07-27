@@ -58,14 +58,8 @@ pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
 }
 async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let lock = Path::new("mops.lock");
-    let doc = if lock.exists() {
-        let str = fs::read_to_string(lock)?;
-        let doc = str.parse::<ImDocument<_>>()?;
-        toml_edit::de::from_document::<Packages>(doc)?
-    } else {
-        Packages::default()
-    };
-    let mut map: BTreeMap<_, _> = doc.package.into_iter().map(|p| (p.get_key(), p)).collect();
+    let pkgs = parse_mops_lock(lock).unwrap_or_default();
+    let mut map: BTreeMap<_, _> = pkgs.into_iter().map(|p| (p.get_key(), p)).collect();
     let str = fs::read_to_string(Path::new("mops.toml"))?;
     let mops = parse_mops_toml(&str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
@@ -199,17 +193,28 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     buf.write_all(res.to_string().as_bytes())?;
     Ok(())
 }
+pub fn generate_moc_args(base_path: &Path) -> Vec<String> {
+    let pkgs = parse_mops_lock(Path::new("mops.lock")).unwrap_or_default();
+    pkgs.into_iter()
+        .flat_map(|pkg| {
+            let path = base_path
+                .join(pkg.get_path())
+                .join(pkg.base_dir)
+                .to_string_lossy()
+                .to_string();
+            vec!["--package".to_string(), pkg.name, path]
+        })
+        .collect()
+}
 pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<()> {
     let lock = Path::new("mops.lock");
-    let str = fs::read_to_string(lock)?;
-    let doc = str.parse::<ImDocument<_>>()?;
-    let lock = toml_edit::de::from_document::<Packages>(doc)?;
+    let pkgs = parse_mops_lock(lock)?;
     let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
-    let bar = Rc::new(create_bar(lock.package.len()));
+    let bar = Rc::new(create_bar(pkgs.len()));
     bar.set_prefix("Downloading packages");
     let mut mop_futures = Vec::new();
     let mut git_futures = Vec::new();
-    for pkg in lock.package {
+    for pkg in pkgs {
         bar.set_message(pkg.name.clone());
         let subpath = pkg.get_path();
         let path = root.join(subpath);
@@ -333,6 +338,12 @@ fn parse_mops_toml(str: &str) -> Result<Vec<Mops>> {
         }
     }
     Ok(mops)
+}
+fn parse_mops_lock(lock: &Path) -> Result<Vec<Package>> {
+    let str = fs::read_to_string(lock)?;
+    let doc = str.parse::<ImDocument<_>>()?;
+    let lock = toml_edit::de::from_document::<Packages>(doc)?;
+    Ok(lock.package)
 }
 enum PackageType<'a> {
     Mops { ver: &'a str, id: &'a str },

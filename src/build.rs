@@ -1,10 +1,11 @@
-use crate::toml::{download_packages_from_lock, update_mops_toml};
+use crate::toml::{download_packages_from_lock, generate_moc_args, update_mops_toml};
 use crate::utils::get_moc;
 use anyhow::{anyhow, Context, Result};
 use candid::Principal;
 use ic_agent::Agent;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
@@ -25,6 +26,11 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
         update_mops_toml(agent, libs).await?;
         download_packages_from_lock(agent, &cache_dir).await?;
     }
+    let pkgs = generate_moc_args(&cache_dir);
+    let mut moc = get_moc()?;
+    moc.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    moc.arg(&main_file).args(pkgs);
+    moc.output()?;
     Ok(())
 }
 
