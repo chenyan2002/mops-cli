@@ -1,24 +1,33 @@
 use anyhow::Result;
+use futures::future::try_join_all;
+use indicatif::ProgressBar;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+use std::rc::Rc;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RepoInfo {
     pub repo: String,
     pub tag: String,
     pub commit: String,
+    pub base_dir: String,
 }
 
 /// Parse github url as specified in `https://docs.mops.one/mops.toml`
 pub async fn parse_github_url(url: &str) -> Result<RepoInfo> {
-    // https://github.com/icdevsorg/candy_library#v0.3.0@907a4e7363aac6c6a4e114ebc73e3d3f21e138af
+    // https://github.com/icdevsorg/candy_library/base_dir#v0.3.0@907a4e7363aac6c6a4e114ebc73e3d3f21e138af
     // or https://github.com/chenyan2002/motoko-splay.git
     let url = url
         .strip_prefix("https://github.com/")
         .ok_or_else(|| anyhow::anyhow!("invalid url"))?;
-    let parts: Vec<&str> = url.split('/').collect();
-    if parts.len() < 2 {
-        return Err(anyhow::anyhow!("invalid url"));
-    }
+    let parts: Vec<&str> = url.splitn(3, '/').collect();
+    let base_dir = match parts.len() {
+        0 | 1 => return Err(anyhow::anyhow!("invalid url")),
+        2 => "src".to_string(),
+        3 => parts[2].to_string(),
+        _ => unreachable!(),
+    };
     let owner = parts[0];
     let mut repo_part = parts[1];
     if repo_part.ends_with(".git") {
@@ -45,9 +54,46 @@ pub async fn parse_github_url(url: &str) -> Result<RepoInfo> {
         repo,
         tag: tag.unwrap(),
         commit: commit.unwrap(),
+        base_dir,
     })
 }
 
+pub async fn download_github_package(
+    base_path: PathBuf,
+    repo: RepoInfo,
+    bar: Rc<ProgressBar>,
+) -> Result<()> {
+    let files = get_file_list(&repo).await?;
+    let mut futures = Vec::new();
+    for file in files {
+        futures.push(download_file(base_path.clone(), repo.clone(), file));
+    }
+    try_join_all(futures).await?;
+    fs::write(base_path.join("DONE"), "")?;
+    bar.inc(1);
+    Ok(())
+}
+
+async fn download_file(base_path: PathBuf, repo: RepoInfo, file: String) -> Result<()> {
+    let content = fetch_file(&repo, &file).await?;
+    let path = base_path.join(file);
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
+pub async fn fetch_file(repo: &RepoInfo, file: &str) -> Result<String> {
+    let url = format!(
+        "https://raw.githubusercontent.com/{}/{}/{}",
+        repo.repo, repo.commit, file
+    );
+    let body = github_request(&url).await?;
+    if body.starts_with("404: Not Found") {
+        return Err(anyhow::anyhow!("file not found"));
+    }
+    Ok(body)
+}
 async fn get_default_branch(repo: &str) -> Result<String> {
     #[derive(Deserialize)]
     struct Branch {
@@ -70,16 +116,32 @@ async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
     Ok(response.sha)
 }
 
-pub async fn fetch_file(repo: &RepoInfo, file: &str) -> Result<String> {
+async fn get_file_list(repo: &RepoInfo) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Tree {
+        tree: Vec<TreeItem>,
+    }
+    #[derive(Deserialize)]
+    struct TreeItem {
+        path: String,
+        r#type: String,
+    }
     let url = format!(
-        "https://raw.githubusercontent.com/{}/{}/{}",
-        repo.repo, repo.commit, file
+        "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
+        repo.repo, repo.commit
     );
     let body = github_request(&url).await?;
-    if body.starts_with("404: Not Found") {
-        return Err(anyhow::anyhow!("file not found"));
-    }
-    Ok(body)
+    let tree = serde_json::from_str::<Tree>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
+    Ok(tree
+        .tree
+        .into_iter()
+        .filter(|item| {
+            item.r#type == "blob"
+                && item.path.starts_with(&repo.base_dir)
+                && item.path.ends_with(".mo")
+        })
+        .map(|item| item.path)
+        .collect())
 }
 
 async fn github_request(url: &str) -> Result<String> {

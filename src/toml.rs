@@ -1,4 +1,4 @@
-use crate::github::{fetch_file, parse_github_url, RepoInfo};
+use crate::github::{download_github_package, fetch_file, parse_github_url, RepoInfo};
 use crate::{mops, storage, utils::create_bar};
 use anyhow::{Error, Result};
 use candid::Principal;
@@ -17,6 +17,7 @@ struct Package {
     name: String,
     version: Option<String>,
     source: String,
+    base_dir: String,
     repo: Option<RepoInfo>,
     dependencies: Vec<String>,
 }
@@ -86,6 +87,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     .into_result()
                     .map_err(Error::msg)?;
                 let source = pkg.publication.storage.to_string();
+                let base_dir = pkg.config.base_dir;
                 let dependencies = pkg
                     .config
                     .dependencies
@@ -110,6 +112,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     name,
                     version: Some(version),
                     source,
+                    base_dir,
                     repo: None,
                     dependencies,
                 }
@@ -139,6 +142,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     name,
                     version: None,
                     source: "github".to_string(),
+                    base_dir: repo_info.base_dir.clone(),
                     repo: Some(repo_info),
                     dependencies,
                 }
@@ -162,6 +166,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     name,
                     version: None,
                     source,
+                    base_dir: "src".to_string(),
                     repo: None,
                     dependencies: mops
                         .into_iter()
@@ -202,7 +207,8 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
     let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
     let bar = Rc::new(create_bar(lock.package.len()));
     bar.set_prefix("Downloading packages");
-    let mut futures = Vec::new();
+    let mut mop_futures = Vec::new();
+    let mut git_futures = Vec::new();
     for pkg in lock.package {
         bar.set_message(pkg.name.clone());
         let subpath = pkg.get_path();
@@ -215,7 +221,7 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
         match pkg.get_type() {
             PackageType::Mops { id, .. } => {
                 let id = Principal::from_text(id)?;
-                futures.push(download_mops_package(
+                mop_futures.push(download_mops_package(
                     path,
                     pkg.name,
                     pkg.version.unwrap(),
@@ -224,10 +230,18 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
                     bar.clone(),
                 ));
             }
+            PackageType::Repo(_) => {
+                git_futures.push(download_github_package(
+                    path,
+                    pkg.repo.unwrap(),
+                    bar.clone(),
+                ));
+            }
             _ => (),
         }
     }
-    try_join_all(futures).await?;
+    try_join_all(mop_futures).await?;
+    try_join_all(git_futures).await?;
     bar.finish_and_clear();
     Ok(())
 }
