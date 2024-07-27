@@ -13,5 +13,6 @@ A Rust client implementation of [the Motoko package manger](https://mops.one/).
 ## Pending issues
 
 * Resolving package versions. Currently, we choose the largest version when package names collide, and errors out when we cannot decide on the version of a package. We need compiler support to allow the same package name to apply to different modules, and follow semantics versioning.
+* Removing a dependency doesn't remove the entries in `mops.lock`
 
  

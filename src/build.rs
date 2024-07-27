@@ -25,17 +25,7 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     let start = Instant::now();
     if !args.lock {
         let imports = get_imports(&main_file, &cache_dir)?;
-        let libs: Vec<_> = imports
-            .iter()
-            .filter_map(|import| {
-                if let MotokoImport::Lib(lib) = import {
-                    Some(lib)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        update_mops_toml(agent, libs).await?;
+        update_mops_toml(agent, imports).await?;
         download_packages_from_lock(agent, &cache_dir).await?;
     }
     let lock_time = start.elapsed();
@@ -77,7 +67,7 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
 }
 
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq)]
-enum MotokoImport {
+pub enum MotokoImport {
     Canister(String),
     Ic(Principal),
     Lib(String),

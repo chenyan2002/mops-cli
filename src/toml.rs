@@ -1,3 +1,4 @@
+use crate::build::MotokoImport;
 use crate::github::{download_github_package, fetch_file, parse_github_url, RepoInfo};
 use crate::{mops, storage, utils::create_bar};
 use anyhow::{anyhow, Error, Result};
@@ -8,7 +9,7 @@ use ic_agent::Agent;
 use indicatif::ProgressBar;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -28,7 +29,7 @@ struct Packages {
     package: Vec<Package>,
 }
 
-pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
+pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Result<()> {
     let mops = Path::new("mops.toml");
     let mut doc = if mops.exists() {
         let str = fs::read_to_string(mops)?;
@@ -40,21 +41,26 @@ pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
     if doc.get("dependencies").is_none() {
         doc["dependencies"] = toml_edit::table();
     }
+    let mut unknown_libs = Vec::new();
     for lib in libs {
-        if doc["dependencies"].get(lib).is_some() {
-            continue;
-        }
-        let version = service.get_highest_version(lib).await?.into_result();
-        match version {
-            Ok(version) => doc["dependencies"][lib] = value(version),
-            Err(_) => {
-                return Err(anyhow!(
-                    "library {lib} not found on mops. Please manually add it to mops.toml"
-                ))
+        match lib {
+            MotokoImport::Lib(lib) => {
+                if doc["dependencies"].get(&lib).is_some() {
+                    continue;
+                }
+                let version = service.get_highest_version(&lib).await?.into_result();
+                match version {
+                    Ok(version) => doc["dependencies"][lib] = value(version),
+                    Err(_) => unknown_libs.push(lib),
+                }
             }
+            _ => (),
         }
     }
     fs::write(mops, doc.to_string())?;
+    if !unknown_libs.is_empty() {
+        return Err(anyhow!("The following imports cannot be find on mops. Please manually add it to mops.toml:\n{unknown_libs:?}"));
+    }
     update_mops_lock(agent).await?;
     Ok(())
 }
