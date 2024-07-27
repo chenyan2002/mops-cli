@@ -8,6 +8,7 @@ anyhow = "1.0.86"
 candid = "0.10.9"
 clap = { version = "4.5.9", features = ["derive"] }
 console = "0.15.8"
+flate2 = "1.0.30"
 futures = "0.3.30"
 ic-agent = "0.36.0"
 indicatif = "0.17.8"
@@ -16,6 +17,7 @@ semver = "1.0.23"
 serde = "1.0.204"
 serde_bytes = "0.11.15"
 serde_json = "1.0.120"
+tar = { version = "0.4.41", default-features = false }
 tokio = { version = "1.38.1", features = ["full"] }
 toml_edit = { version = "0.22.16", features = ["serde"] }
 

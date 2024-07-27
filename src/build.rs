@@ -1,5 +1,5 @@
 use crate::toml::{download_packages_from_lock, generate_moc_args, update_mops_toml};
-use crate::utils::{create_spinner_bar, exec, get_moc};
+use crate::utils::{create_spinner_bar, download_moc, exec, get_moc};
 use anyhow::{anyhow, Context, Result};
 use candid::Principal;
 use console::style;
@@ -11,7 +11,6 @@ use std::time::Instant;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
-    let start = Instant::now();
     let main_file = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
     let cache_dir = if let Some(dir) = &args.cache_dir {
         PathBuf::from(dir)
@@ -22,8 +21,10 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
             "Cannot find home directory, use --cache_dir to specify the cache directory."
         ));
     };
+    download_moc(&cache_dir).await?;
+    let start = Instant::now();
     if !args.lock {
-        let imports = get_imports(&main_file)?;
+        let imports = get_imports(&main_file, &cache_dir)?;
         let libs: Vec<_> = imports
             .iter()
             .filter_map(|import| {
@@ -41,7 +42,7 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     let pkgs = generate_moc_args(&cache_dir);
     let msg = format!("{} {}", style("Compiling").cyan(), main_file.display());
     let bar = create_spinner_bar(msg);
-    let mut moc = get_moc()?;
+    let mut moc = get_moc(&cache_dir)?;
     moc.arg(&main_file).args(pkgs);
     if let Some(out) = &args.output {
         moc.arg("-o").arg(out);
@@ -82,13 +83,17 @@ enum MotokoImport {
     Lib(String),
     Local(PathBuf),
 }
-fn get_imports(main_path: &Path) -> Result<BTreeSet<MotokoImport>> {
-    fn get_imports_recursive(file: &Path, result: &mut BTreeSet<MotokoImport>) -> Result<()> {
+fn get_imports(main_path: &Path, cache_dir: &Path) -> Result<BTreeSet<MotokoImport>> {
+    fn get_imports_recursive(
+        cache_dir: &Path,
+        file: &Path,
+        result: &mut BTreeSet<MotokoImport>,
+    ) -> Result<()> {
         if result.contains(&MotokoImport::Local(file.to_path_buf())) {
             return Ok(());
         }
         result.insert(MotokoImport::Local(file.to_path_buf()));
-        let mut command = get_moc()?;
+        let mut command = get_moc(cache_dir)?;
         let command = command.arg("--print-deps").arg(file);
         let output = command
             .output()
@@ -106,7 +111,7 @@ fn get_imports(main_path: &Path) -> Result<BTreeSet<MotokoImport>> {
             let import = MotokoImport::try_from(line).context("Failed to parse import.")?;
             match import {
                 MotokoImport::Local(path) => {
-                    get_imports_recursive(path.as_path(), result)?;
+                    get_imports_recursive(cache_dir, path.as_path(), result)?;
                 }
                 _ => {
                     result.insert(import);
@@ -116,7 +121,7 @@ fn get_imports(main_path: &Path) -> Result<BTreeSet<MotokoImport>> {
         Ok(())
     }
     let mut result = BTreeSet::new();
-    get_imports_recursive(main_path, &mut result)?;
+    get_imports_recursive(cache_dir, main_path, &mut result)?;
     Ok(result)
 }
 

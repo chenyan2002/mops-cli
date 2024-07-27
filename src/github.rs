@@ -123,6 +123,16 @@ async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
     let response = serde_json::from_str::<Commit>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
     Ok(response.sha)
 }
+pub async fn get_latest_release_tag(repo: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Release {
+        tag_name: String,
+    }
+    let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+    let body = github_request(&url).await?;
+    let response = serde_json::from_str::<Release>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
+    Ok(response.tag_name)
+}
 
 async fn get_file_list(repo: &RepoInfo) -> Result<Vec<String>> {
     #[derive(Deserialize)]
@@ -151,7 +161,6 @@ async fn get_file_list(repo: &RepoInfo) -> Result<Vec<String>> {
         .map(|item| item.path)
         .collect())
 }
-
 async fn github_request(url: &str) -> Result<String> {
     let client = reqwest::Client::new();
     let mut request = client.get(url).header("User-Agent", "mops-cli");

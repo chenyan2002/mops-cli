@@ -1,12 +1,52 @@
+use crate::github::get_latest_release_tag;
 use anyhow::{anyhow, Context, Result};
+use console::style;
+use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::fs::{self, File};
+use std::path::Path;
 use std::process::Command;
+use tar::Archive;
 
-pub fn get_moc() -> Result<Command> {
-    let dfx_cache = Command::new("dfx").args(["cache", "show"]).output()?.stdout;
-    let dfx_cache_path = String::from_utf8_lossy(&dfx_cache).trim().to_string();
-    let cmd = Command::new(format!("{}/moc", dfx_cache_path));
+pub fn get_moc(base_path: &Path) -> Result<Command> {
+    let cmd = Command::new(format!("{}/bin/moc", base_path.display()));
     Ok(cmd)
+}
+
+pub async fn download_moc(base_path: &Path) -> Result<()> {
+    use std::io::Write;
+    if base_path.join("bin/moc").exists() {
+        return Ok(());
+    }
+    let bar = create_spinner_bar("Downloading moc");
+    let tag = get_latest_release_tag("dfinity/motoko").await?;
+    let platform = if cfg!(target_os = "macos") {
+        "Darwin"
+    } else if cfg!(target_os = "linux") {
+        "Linux"
+    } else {
+        anyhow::bail!("Unsupported platform");
+    };
+    let url = format!("https://github.com/dfinity/motoko/releases/download/{tag}/motoko-{platform}-x86_64-{tag}.tar.gz");
+    bar.set_message(format!("Downloading moc {tag}"));
+    let response = reqwest::get(url).await?;
+    let gz_file = base_path.join(format!("bin/moc-{tag}.tar.gz"));
+    fs::create_dir_all(gz_file.parent().unwrap())?;
+    let mut file = File::create(&gz_file)?;
+    let content = response.bytes().await?;
+    file.write_all(&content)?;
+    bar.set_message(format!("Decompressing moc {tag}"));
+    let gz = File::open(&gz_file)?;
+    let tar = GzDecoder::new(gz);
+    let mut archive = Archive::new(tar);
+    archive.unpack(base_path.join("bin"))?;
+    fs::remove_file(&gz_file)?;
+    bar.set_message(format!(
+        "{:>12} moc {tag}",
+        style("Installed").green().bold()
+    ));
+    bar.finish();
+    Ok(())
 }
 
 pub fn exec(mut cmd: Command, bar: &ProgressBar) -> Result<()> {
