@@ -70,6 +70,7 @@ pub async fn download_github_package(
     }
     try_join_all(futures).await?;
     fs::write(base_path.join("DONE"), "")?;
+    bar.println(format!("Downloaded {}@{}", repo.repo, repo.tag));
     bar.inc(1);
     Ok(())
 }

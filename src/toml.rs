@@ -214,7 +214,6 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
         let subpath = pkg.get_path();
         let path = root.join(subpath);
         if path.join("DONE").exists() {
-            println!("skipping {}", path.display());
             bar.inc(1);
             continue;
         }
@@ -237,7 +236,9 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
                     bar.clone(),
                 ));
             }
-            _ => (),
+            PackageType::Local(_) => {
+                bar.inc(1);
+            }
         }
     }
     try_join_all(mop_futures).await?;
@@ -265,6 +266,7 @@ async fn download_mops_package(
     }
     try_join_all(futures).await?;
     fs::write(base_path.join("DONE"), "")?;
+    bar.println(format!("Downloaded {lib}@{version}"));
     bar.inc(1);
     Ok(())
 }
@@ -288,7 +290,6 @@ async fn download_file(
         blob.extend(chunk);
     }
     let path = base_path.join(meta.path);
-    println!("{} {}", path.display(), blob.len());
     fs::create_dir_all(path.parent().unwrap())?;
     fs::write(path, blob)?;
     Ok(())

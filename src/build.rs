@@ -7,20 +7,24 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
-pub async fn build(agent: &Agent, main_file: &Path) -> Result<()> {
-    let imports = get_imports(main_file)?;
-    let libs: Vec<_> = imports
-        .iter()
-        .filter_map(|import| {
-            if let MotokoImport::Lib(lib) = import {
-                Some(lib)
-            } else {
-                None
-            }
-        })
-        .collect();
-    update_mops_toml(agent, libs).await?;
-    download_packages_from_lock(agent, Path::new(".mops")).await?;
+pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
+    let main_file = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
+    let cache_dir = args.cache_dir.unwrap_or_else(|| PathBuf::from(".mops"));
+    if !args.lock {
+        let imports = get_imports(&main_file)?;
+        let libs: Vec<_> = imports
+            .iter()
+            .filter_map(|import| {
+                if let MotokoImport::Lib(lib) = import {
+                    Some(lib)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        update_mops_toml(agent, libs).await?;
+        download_packages_from_lock(agent, &cache_dir).await?;
+    }
     Ok(())
 }
 

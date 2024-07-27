@@ -15,9 +15,15 @@ enum ClapCommand {
     Build(BuildArg),
 }
 #[derive(Parser)]
-struct BuildArg {
+pub struct BuildArg {
     /// The path to the main Motoko file
-    main: Option<PathBuf>,
+    pub main: Option<PathBuf>,
+    #[arg(short, long)]
+    /// Directory to store external dependencies
+    pub cache_dir: Option<PathBuf>,
+    #[arg(long)]
+    /// Lock the dependencies
+    pub lock: bool,
 }
 
 fn main() -> Result<()> {
@@ -27,8 +33,7 @@ fn main() -> Result<()> {
         .build()?;
     match cmd {
         ClapCommand::Build(args) => {
-            let main = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
-            build::build(&agent, &main)?;
+            build::build(&agent, args)?;
         }
     }
     Ok(())
