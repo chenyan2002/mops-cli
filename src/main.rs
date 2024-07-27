@@ -21,9 +21,15 @@ pub struct BuildArg {
     #[arg(short, long)]
     /// Directory to store external dependencies
     pub cache_dir: Option<PathBuf>,
+    #[arg(short, long)]
+    /// Output Wasm file path
+    pub output: Option<String>,
     #[arg(long)]
     /// Lock the dependencies
     pub lock: bool,
+    #[clap(last = true)]
+    /// Extra arguments passed to moc. Default args are "--release --idl --stable-types --public-metadata candid:service". When extra arguments are provided, the default args are not included.
+    extra_args: Vec<String>,
 }
 
 fn main() -> Result<()> {

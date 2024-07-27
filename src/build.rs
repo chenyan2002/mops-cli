@@ -13,7 +13,15 @@ use std::time::Instant;
 pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     let start = Instant::now();
     let main_file = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
-    let cache_dir = args.cache_dir.unwrap_or_else(|| PathBuf::from(".mops"));
+    let cache_dir = if let Some(dir) = &args.cache_dir {
+        PathBuf::from(dir)
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".mops")
+    } else {
+        return Err(anyhow!(
+            "Cannot find home directory, use --cache_dir to specify the cache directory."
+        ));
+    };
     if !args.lock {
         let imports = get_imports(&main_file)?;
         let libs: Vec<_> = imports
@@ -35,6 +43,20 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     let bar = create_spinner_bar(msg);
     let mut moc = get_moc()?;
     moc.arg(&main_file).args(pkgs);
+    if let Some(out) = &args.output {
+        moc.arg("-o").arg(out);
+    }
+    if !args.extra_args.is_empty() {
+        for arg in args.extra_args {
+            moc.arg(arg);
+        }
+    } else {
+        moc.arg("--release")
+            .arg("--idl")
+            .arg("--stable-types")
+            .arg("--public-metadata")
+            .arg("candid:service");
+    }
     exec(moc, &bar)?;
     bar.finish_and_clear();
     let mut msg = format!(
