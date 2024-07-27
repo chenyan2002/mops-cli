@@ -1,10 +1,11 @@
 use crate::github::{download_github_package, fetch_file, parse_github_url, RepoInfo};
 use crate::{mops, storage, utils::create_bar};
-use anyhow::{Error, Result};
+use anyhow::{anyhow, Error, Result};
 use candid::Principal;
 use futures::future::try_join_all;
 use ic_agent::Agent;
 use indicatif::ProgressBar;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
@@ -46,7 +47,7 @@ pub async fn update_mops_toml(agent: &Agent, libs: Vec<&String>) -> Result<()> {
         match version {
             Ok(version) => doc["dependencies"][lib] = value(version),
             Err(_) => {
-                return Err(anyhow::anyhow!(
+                return Err(anyhow!(
                     "library {lib} not found on mops. Please manually add it to mops.toml"
                 ))
             }
@@ -178,10 +179,11 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
         bar.inc(1);
     }
     bar.finish_and_clear();
+    let pkgs = resolve_versions(map)?;
     let mut res = DocumentMut::new();
     let mut array = toml_edit::ArrayOfTables::new();
-    for p in map.values() {
-        let d = toml_edit::ser::to_document(p)?;
+    for p in pkgs {
+        let d = toml_edit::ser::to_document(&p)?;
         array.push(d.as_table().clone());
     }
     res.insert("package", toml_edit::Item::ArrayOfTables(array));
@@ -192,6 +194,35 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     )?;
     buf.write_all(res.to_string().as_bytes())?;
     Ok(())
+}
+fn resolve_versions(map: BTreeMap<String, Package>) -> Result<Vec<Package>> {
+    let mut res: BTreeMap<String, Package> = BTreeMap::new();
+    for pkg in map.into_values() {
+        if let Some(e) = res.get(&pkg.name) {
+            match (&e.version, &pkg.version) {
+                (None, _) | (_, None) => return Err(anyhow!(resolve_error(e, &pkg))),
+                (Some(ve), Some(vp)) => match (parse_version(ve), parse_version(vp)) {
+                    (None, _) | (_, None) => return Err(anyhow!(resolve_error(e, &pkg))),
+                    (Some(ve), Some(vp)) => {
+                        if ve < vp {
+                            res.insert(pkg.name.clone(), pkg);
+                        }
+                    }
+                },
+            }
+        } else {
+            res.insert(pkg.name.clone(), pkg);
+        }
+    }
+    Ok(res.into_values().collect())
+}
+fn parse_version(ver: &str) -> Option<Version> {
+    ver.parse::<Version>().ok()
+}
+fn resolve_error(p1: &Package, p2: &Package) -> String {
+    let p1 = toml_edit::ser::to_string(p1).unwrap();
+    let p2 = toml_edit::ser::to_string(p2).unwrap();
+    format!("Version conflict:\n{p1}\nand\n\n{p2}")
 }
 pub fn generate_moc_args(base_path: &Path) -> Vec<String> {
     let pkgs = parse_mops_lock(Path::new("mops.lock")).unwrap_or_default();
@@ -271,7 +302,7 @@ async fn download_mops_package(
     }
     try_join_all(futures).await?;
     fs::write(base_path.join("DONE"), "")?;
-    bar.println(format!("Downloaded {lib}@{version}"));
+    bar.println(format!("{:>12} {lib}@{version}", "Downloaded"));
     bar.inc(1);
     Ok(())
 }
@@ -312,13 +343,13 @@ fn parse_mops_toml(str: &str) -> Result<Vec<Mops>> {
     if let Some(deps) = doc.get("dependencies") {
         let deps = deps
             .as_table()
-            .ok_or_else(|| anyhow::anyhow!("invalid dependencies"))?;
+            .ok_or_else(|| anyhow!("invalid dependencies"))?;
         for (lib, version) in deps.iter() {
             let version = version
                 .as_value()
-                .ok_or_else(|| anyhow::anyhow!("invalid version"))?
+                .ok_or_else(|| anyhow!("invalid version"))?
                 .as_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid version"))?;
+                .ok_or_else(|| anyhow!("invalid version"))?;
             if version.starts_with("https://github.com") {
                 mops.push(Mops::Repo {
                     name: lib.to_string(),

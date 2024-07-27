@@ -1,14 +1,16 @@
 use crate::toml::{download_packages_from_lock, generate_moc_args, update_mops_toml};
-use crate::utils::get_moc;
+use crate::utils::{create_spinner_bar, exec, get_moc};
 use anyhow::{anyhow, Context, Result};
 use candid::Principal;
 use ic_agent::Agent;
+use indicatif::HumanDuration;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::time::Instant;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
+    let start = Instant::now();
     let main_file = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
     let cache_dir = args.cache_dir.unwrap_or_else(|| PathBuf::from(".mops"));
     if !args.lock {
@@ -26,11 +28,26 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
         update_mops_toml(agent, libs).await?;
         download_packages_from_lock(agent, &cache_dir).await?;
     }
+    let lock_time = start.elapsed();
     let pkgs = generate_moc_args(&cache_dir);
+    let bar = create_spinner_bar(format!("Compiling {}...", main_file.display()));
     let mut moc = get_moc()?;
-    moc.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     moc.arg(&main_file).args(pkgs);
-    moc.output()?;
+    exec(moc, &bar)?;
+    bar.finish_and_clear();
+    let mut msg = format!(
+        "{:>12} building {} in {}",
+        "Finished",
+        main_file.display(),
+        HumanDuration(start.elapsed())
+    );
+    if !args.lock {
+        msg.push_str(&format!(
+            " ({} to download packages)",
+            HumanDuration(lock_time)
+        ));
+    }
+    println!("{msg}");
     Ok(())
 }
 
