@@ -20,7 +20,7 @@ canister_id = "ryjl3-tyaaa-aaaaa-aaaba-cai"
 
 ## Pending issues
 
-* Resolving package versions. Currently, we choose the largest version when package names collide, and errors out when we cannot decide on the version of a package. We need compiler support to allow the same package name to apply to different modules, and follow semantics versioning.
+* Resolving package versions. Currently, we choose the largest version when package names collide, and errors out when we cannot decide on the version of a package. We need compiler support to allow the same package name to apply to different modules, and follow semantic versioning. The base library also need to follow semantic versioning.
 * Removing a dependency doesn't remove the entries in `mops.lock`
 
  

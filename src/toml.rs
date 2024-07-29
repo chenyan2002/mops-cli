@@ -49,9 +49,9 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
     if doc.get("dependencies").is_none() {
         doc["dependencies"] = toml_edit::table();
     }
-    /*if doc.get("canister").is_none() {
+    if doc.get("canister").is_none() {
         doc["canister"] = toml_edit::array();
-    }*/
+    }
     let mut unknown_libs = Vec::new();
     for lib in libs {
         match lib {
@@ -65,20 +65,30 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
                     Err(_) => unknown_libs.push(lib),
                 }
             }
-            /*MotokoImport::Canister(name) => {
-                if doc["canister"].get(&name).is_some() {
+            MotokoImport::Canister(name) => {
+                let canisters = doc["canister"].as_array_of_tables_mut().unwrap();
+                if canisters.iter().any(|c| {
+                    c.get("name")
+                        .is_some_and(|n| n.as_value().unwrap().as_str().unwrap() == name)
+                }) {
                     continue;
                 }
-                return Err(anyhow!("Add the canister id of \"{name}\" to the [canisters] section in mops.toml."));
+                return Err(anyhow!("Add the following to mops.toml.\n[[canister]]\nname = \"{name}\"\ncanister_id = \"canister_id\""));
             }
             MotokoImport::Ic(id) => {
-                let item = id.to_string();
-                if doc["canister"].get(&item).is_some() {
+                let canisters = doc["canister"].as_array_of_tables_mut().unwrap();
+                let id = id.to_string();
+                if canisters.iter().any(|c| {
+                    c.get("canister_id")
+                        .is_some_and(|n| n.as_value().unwrap().as_str().unwrap() == id)
+                }) {
                     continue;
                 }
-                doc["canisters"][item] = value("");
-            }*/
-            _ => (),
+                let mut table = toml_edit::Table::new();
+                table.insert("canister_id", value(id.to_string()));
+                canisters.push(table);
+            }
+            MotokoImport::Local(_) => (),
         }
     }
     fs::write(mops, doc.to_string())?;
