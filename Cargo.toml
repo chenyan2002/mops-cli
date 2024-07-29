@@ -5,12 +5,12 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
-candid = "0.10.9"
+candid = "0.10.10"
 clap = { version = "4.5.9", features = ["derive"] }
 console = "0.15.8"
 flate2 = "1.0.30"
 futures = "0.3.30"
-ic-agent = "0.36.0"
+ic-agent = "0.37"
 indicatif = "0.17.8"
 reqwest = { version = "0.12.5", features = ["json"] }
 semver = "1.0.23"
@@ -21,5 +21,3 @@ tar = { version = "0.4.41", default-features = false }
 tokio = { version = "1.38.1", features = ["full"] }
 toml_edit = { version = "0.22.16", features = ["serde"] }
 
-[patch.crates-io]
-candid = { git = "https://github.com/dfinity/candid.git", branch = "configs" }
