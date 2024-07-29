@@ -24,9 +24,17 @@ struct Package {
     repo: Option<RepoInfo>,
     dependencies: Vec<String>,
 }
+#[derive(Debug, Serialize, Deserialize)]
+struct Canister {
+    canister_id: String,
+    name: Option<String>,
+    timestamp: Option<String>,
+    candid: String,
+}
 #[derive(Default, Serialize, Deserialize)]
 struct Packages {
     package: Vec<Package>,
+    canister: Option<Vec<Canister>>,
 }
 
 pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Result<()> {
@@ -41,6 +49,9 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
     if doc.get("dependencies").is_none() {
         doc["dependencies"] = toml_edit::table();
     }
+    /*if doc.get("canister").is_none() {
+        doc["canister"] = toml_edit::array();
+    }*/
     let mut unknown_libs = Vec::new();
     for lib in libs {
         match lib {
@@ -54,12 +65,25 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
                     Err(_) => unknown_libs.push(lib),
                 }
             }
+            /*MotokoImport::Canister(name) => {
+                if doc["canister"].get(&name).is_some() {
+                    continue;
+                }
+                return Err(anyhow!("Add the canister id of \"{name}\" to the [canisters] section in mops.toml."));
+            }
+            MotokoImport::Ic(id) => {
+                let item = id.to_string();
+                if doc["canister"].get(&item).is_some() {
+                    continue;
+                }
+                doc["canisters"][item] = value("");
+            }*/
             _ => (),
         }
     }
     fs::write(mops, doc.to_string())?;
     if !unknown_libs.is_empty() {
-        return Err(anyhow!("The following imports cannot be find on mops. Please manually add it to mops.toml:\n{unknown_libs:?}"));
+        return Err(anyhow!("The following imports cannot be found on mops. Please manually add it to mops.toml:\n{unknown_libs:?}"));
     }
     update_mops_lock(agent).await?;
     Ok(())
@@ -67,13 +91,47 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
 async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let lock = Path::new("mops.lock");
     let pkgs = parse_mops_lock(lock).unwrap_or_default();
-    let mut map: BTreeMap<_, _> = pkgs.into_iter().map(|p| (p.get_key(), p)).collect();
+    let mut map: BTreeMap<_, _> = pkgs.package.into_iter().map(|p| (p.get_key(), p)).collect();
+    let mut canisters: BTreeMap<_, _> = pkgs
+        .canister
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| (c.get_key(), c))
+        .collect();
     let str = fs::read_to_string(Path::new("mops.toml"))?;
-    let mops = parse_mops_toml(&str)?.dependencies;
+    let toml = parse_mops_toml(&str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
-    let bar = create_bar(mops.len());
+    let bar = create_bar(toml.dependencies.len() + toml.canisters.len());
     bar.set_prefix("Updating mops.lock");
-    let mut queue = mops.into_iter().collect::<VecDeque<_>>();
+    for canister in toml.canisters {
+        if canisters.contains_key(&canister.get_key()) {
+            bar.inc(1);
+            continue;
+        }
+        let (timestamp, candid) = if let Some(candid) = canister.candid {
+            (None, candid)
+        } else {
+            use std::time::SystemTime;
+            let id = Principal::from_text(&canister.canister_id)?;
+            let candid = String::from_utf8(
+                agent
+                    .read_state_canister_metadata(id, "candid:service")
+                    .await?,
+            )?;
+            let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
+            (Some(format!("{:?}", timestamp)), candid)
+        };
+        let info = Canister {
+            canister_id: canister.canister_id,
+            name: canister.name,
+            timestamp,
+            candid,
+        };
+        assert!(canisters.insert(info.get_key(), info).is_none());
+        bar.inc(1);
+    }
+
+    let mut queue = toml.dependencies.into_iter().collect::<VecDeque<_>>();
     // TODO: maintain a map between mops to resolved package.get_key, so we can rewrite dependencies entry at the end
     while let Some(m) = queue.pop_front() {
         let pkg = match m {
@@ -197,12 +255,18 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     bar.finish_and_clear();
     let pkgs = resolve_versions(map)?;
     let mut res = DocumentMut::new();
-    let mut array = toml_edit::ArrayOfTables::new();
+    let mut pkg_array = toml_edit::ArrayOfTables::new();
     for p in pkgs {
         let d = toml_edit::ser::to_document(&p)?;
-        array.push(d.as_table().clone());
+        pkg_array.push(d.as_table().clone());
     }
-    res.insert("package", toml_edit::Item::ArrayOfTables(array));
+    res.insert("package", toml_edit::Item::ArrayOfTables(pkg_array));
+    let mut can_array = toml_edit::ArrayOfTables::new();
+    for c in canisters.into_values() {
+        let d = toml_edit::ser::to_document(&c)?;
+        can_array.push(d.as_table().clone());
+    }
+    res.insert("canister", toml_edit::Item::ArrayOfTables(can_array));
     use std::io::Write;
     let mut buf = fs::File::create(lock)?;
     buf.write_all(
@@ -244,9 +308,11 @@ fn resolve_error(p1: &Package, p2: &Package) -> String {
         style(&p2).green()
     )
 }
-pub fn generate_moc_args(base_path: &Path) -> Vec<String> {
-    let pkgs = parse_mops_lock(Path::new("mops.lock")).unwrap_or_default();
-    pkgs.into_iter()
+pub fn generate_moc_args(base_path: &Path) -> Result<Vec<String>> {
+    let lock = parse_mops_lock(Path::new("mops.lock")).unwrap_or_default();
+    let mut args: Vec<_> = lock
+        .package
+        .into_iter()
         .flat_map(|pkg| {
             let path = base_path
                 .join(pkg.get_path())
@@ -255,11 +321,30 @@ pub fn generate_moc_args(base_path: &Path) -> Vec<String> {
                 .to_string();
             vec!["--package".to_string(), pkg.name, path]
         })
-        .collect()
+        .collect();
+    if let Some(canisters) = lock.canister {
+        if !canisters.is_empty() {
+            args.extend_from_slice(&["--actor-idl".to_string(), ".mops/candid".to_string()]);
+        }
+        for c in canisters {
+            let file = Path::new(".mops/candid").join(format!("{}.did", c.canister_id));
+            fs::create_dir_all(file.parent().unwrap())?;
+            if c.timestamp.is_none() {
+                let candid = fs::read_to_string(c.candid)?;
+                fs::write(file, candid)?;
+            } else {
+                fs::write(file, c.candid)?;
+            }
+            if let Some(name) = c.name {
+                args.extend_from_slice(&["--actor-alias".to_string(), name, c.canister_id]);
+            }
+        }
+    }
+    Ok(args)
 }
 pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<()> {
     let lock = Path::new("mops.lock");
-    let pkgs = parse_mops_lock(lock)?;
+    let pkgs = parse_mops_lock(lock)?.package;
     let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
     let bar = Rc::new(create_bar(pkgs.len()));
     bar.set_prefix("Downloading packages");
@@ -360,10 +445,17 @@ enum Mops {
     Repo { name: String, repo: String },
     Local { name: String, path: String },
 }
+#[derive(Debug, Serialize, Deserialize)]
+struct CanisterInfo {
+    canister_id: String,
+    name: Option<String>,
+    candid: Option<String>,
+}
 #[derive(Debug)]
 struct MopsConfig {
     version: Option<String>,
     dependencies: Vec<Mops>,
+    canisters: Vec<CanisterInfo>,
 }
 fn parse_mops_toml(str: &str) -> Result<MopsConfig> {
     let doc = str.parse::<ImDocument<_>>()?;
@@ -402,16 +494,41 @@ fn parse_mops_toml(str: &str) -> Result<MopsConfig> {
             }
         }
     }
+    let mut canisters = Vec::new();
+    if let Some(item) = doc.get("canister") {
+        for canister in item.as_array_of_tables().unwrap().iter() {
+            let canister_id = canister
+                .get("canister_id")
+                .ok_or_else(|| anyhow!("canister_id is required"))?
+                .as_value()
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string();
+            let name = canister
+                .get("name")
+                .map(|name| name.as_value().unwrap().as_str().unwrap().to_string());
+            let candid = canister
+                .get("candid")
+                .map(|name| name.as_value().unwrap().as_str().unwrap().to_string());
+            canisters.push(CanisterInfo {
+                canister_id,
+                name,
+                candid,
+            });
+        }
+    }
     Ok(MopsConfig {
         version,
         dependencies: mops,
+        canisters,
     })
 }
-fn parse_mops_lock(lock: &Path) -> Result<Vec<Package>> {
+fn parse_mops_lock(lock: &Path) -> Result<Packages> {
     let str = fs::read_to_string(lock)?;
     let doc = str.parse::<ImDocument<_>>()?;
     let lock = toml_edit::de::from_document::<Packages>(doc)?;
-    Ok(lock.package)
+    Ok(lock)
 }
 enum PackageType<'a> {
     Mops { ver: &'a str, id: &'a str },
@@ -459,7 +576,17 @@ impl Package {
         }
     }
 }
-
+impl Canister {
+    fn get_key(&self) -> String {
+        // technically it's self.name.unwrap_or(canister_id). Need to think about the logic for dedup
+        format!("{}-{:?}", self.canister_id, self.name)
+    }
+}
+impl CanisterInfo {
+    fn get_key(&self) -> String {
+        format!("{}-{:?}", self.canister_id, self.name)
+    }
+}
 impl Mops {
     fn get_display_key(&self) -> String {
         // only for displaying in dependencies, not used for dedup

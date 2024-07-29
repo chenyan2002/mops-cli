@@ -29,7 +29,7 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
         download_packages_from_lock(agent, &cache_dir).await?;
     }
     let lock_time = start.elapsed();
-    let pkgs = generate_moc_args(&cache_dir);
+    let pkgs = generate_moc_args(&cache_dir)?;
     let msg = format!("{} {}", style("Compiling").cyan(), main_file.display());
     let bar = create_spinner_bar(msg);
     let mut moc = get_moc(&cache_dir)?;
