@@ -114,14 +114,17 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
     let bar = create_bar(toml.dependencies.len() + toml.canisters.len());
     bar.set_prefix("Updating mops.lock");
     for canister in toml.canisters {
-        if canisters.contains_key(&canister.get_key()) {
-            bar.inc(1);
-            continue;
+        if let Some(c) = canisters.get(&canister.get_key()) {
+            if c.no_need_to_update(&canister) {
+                bar.inc(1);
+                continue;
+            }
         }
         let (timestamp, candid) = if let Some(candid) = canister.candid {
             (None, candid)
         } else {
             use std::time::SystemTime;
+            // TODO handle aaaaa-aa
             let id = Principal::from_text(&canister.canister_id)?;
             let candid = String::from_utf8(
                 agent
@@ -129,6 +132,10 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     .await?,
             )?;
             let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
+            bar.println(format!(
+                "{:>12} canister interface for {id}",
+                style("Fetched").green().bold()
+            ));
             (Some(format!("{:?}", timestamp)), candid)
         };
         let info = Canister {
@@ -137,7 +144,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
             timestamp,
             candid,
         };
-        assert!(canisters.insert(info.get_key(), info).is_none());
+        canisters.insert(info.get_key(), info);
         bar.inc(1);
     }
 
@@ -190,7 +197,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
             Mops::Repo { name, repo } => {
                 bar.set_message(name.clone());
                 let repo_info = parse_github_url(&repo).await?;
-                if map.contains_key(&format!("{}-{}", name, repo_info.commit)) {
+                if map.contains_key(&format!("{}-{}-{}", name, repo_info.repo, repo_info.commit)) {
                     bar.inc(1);
                     continue;
                 }
@@ -563,7 +570,7 @@ impl Package {
         // Make sure this is the same logic as used in update_mops_lock
         match self.get_type() {
             PackageType::Mops { ver, .. } => format!("{}-{}", self.name, ver),
-            PackageType::Repo(repo) => format!("{}-{}", self.name, repo.commit),
+            PackageType::Repo(repo) => format!("{}-{}-{}", self.name, repo.repo, repo.commit),
             PackageType::Local(local) => format!("{}-{}", self.name, local),
         }
     }
@@ -589,12 +596,22 @@ impl Package {
 impl Canister {
     fn get_key(&self) -> String {
         // technically it's self.name.unwrap_or(canister_id). Need to think about the logic for dedup
-        format!("{}-{:?}", self.canister_id, self.name)
+        self.name.as_ref().unwrap_or(&self.canister_id).clone()
+    }
+    fn no_need_to_update(&self, new: &CanisterInfo) -> bool {
+        if self.canister_id != new.canister_id {
+            return false;
+        }
+        if self.timestamp.is_some() {
+            new.candid.is_none()
+        } else {
+            new.candid.as_ref().is_some_and(|c| c == &self.candid)
+        }
     }
 }
 impl CanisterInfo {
     fn get_key(&self) -> String {
-        format!("{}-{:?}", self.canister_id, self.name)
+        self.name.as_ref().unwrap_or(&self.canister_id).clone()
     }
 }
 impl Mops {

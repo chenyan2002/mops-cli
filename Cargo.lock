@@ -270,6 +270,7 @@ dependencies = [
 [[package]]
 name = "candid"
 version = "0.10.9"
+source = "git+https://github.com/dfinity/candid.git?branch=configs#66df8a974c001fc6ed6ee1bd758e94389fd6b6e6"
 dependencies = [
  "anyhow",
  "binread",
@@ -291,6 +292,7 @@ dependencies = [
 [[package]]
 name = "candid_derive"
 version = "0.6.6"
+source = "git+https://github.com/dfinity/candid.git?branch=configs#66df8a974c001fc6ed6ee1bd758e94389fd6b6e6"
 dependencies = [
  "lazy_static",
  "proc-macro2",
@@ -1091,6 +1093,7 @@ dependencies = [
 [[package]]
 name = "ic_principal"
 version = "0.1.1"
+source = "git+https://github.com/dfinity/candid.git?branch=configs#66df8a974c001fc6ed6ee1bd758e94389fd6b6e6"
 dependencies = [
  "crc32fast",
  "data-encoding",
