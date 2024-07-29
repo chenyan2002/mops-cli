@@ -2,7 +2,7 @@
 base = "0.11.3"
 prng = "0.0.5"
 splay = "https://github.com/chenyan2002/motoko-splay.git"
-base_local = "../motoko-base"
+base_local = "../../motoko-base"
 candb = "1.0.8"
 
 [[canister]]
