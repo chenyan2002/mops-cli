@@ -1,3 +1,4 @@
+use crate::utils::println;
 use anyhow::Result;
 use console::style;
 use futures::future::try_join_all;
@@ -72,12 +73,15 @@ pub async fn download_github_package(
     }
     try_join_all(futures).await?;
     fs::write(base_path.join(repo.get_done_file()), "")?;
-    bar.println(format!(
-        "{:>12} {}@{}",
-        style("Downloaded").green().bold(),
-        repo.repo,
-        repo.tag
-    ));
+    println(
+        &bar,
+        &format!(
+            "{:>12} {}@{}",
+            style("Downloaded").green().bold(),
+            repo.repo,
+            repo.tag
+        ),
+    );
     bar.inc(1);
     Ok(())
 }

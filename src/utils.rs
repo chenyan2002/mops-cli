@@ -54,15 +54,22 @@ pub fn exec(mut cmd: Command, bar: &ProgressBar) -> Result<()> {
         .output()
         .with_context(|| format!("Error executing {:#?}", cmd))?;
     if !output.stderr.is_empty() {
-        bar.println(String::from_utf8_lossy(&output.stderr));
+        println(bar, &String::from_utf8_lossy(&output.stderr));
     }
     if !output.stdout.is_empty() {
-        bar.println(String::from_utf8_lossy(&output.stdout));
+        println(bar, &String::from_utf8_lossy(&output.stdout));
     }
     if !output.status.success() {
         return Err(anyhow!("Exit with code {}", output.status));
     }
     Ok(())
+}
+pub fn println(bar: &ProgressBar, msg: &str) {
+    if bar.is_hidden() {
+        println!("{msg}");
+    } else {
+        bar.println(msg);
+    }
 }
 
 pub fn create_bar(len: usize) -> ProgressBar {

@@ -1,6 +1,9 @@
 use crate::build::MotokoImport;
 use crate::github::{download_github_package, fetch_file, parse_github_url, RepoInfo};
-use crate::{mops, storage, utils::create_bar};
+use crate::{
+    mops, storage,
+    utils::{create_bar, println},
+};
 use anyhow::{anyhow, Error, Result};
 use candid::Principal;
 use console::style;
@@ -132,10 +135,13 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
                     .await?,
             )?;
             let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-            bar.println(format!(
-                "{:>12} canister interface for {id}",
-                style("Fetched").green().bold()
-            ));
+            println(
+                &bar,
+                &format!(
+                    "{:>12} canister interface for {id}",
+                    style("Fetched").green().bold()
+                ),
+            );
             (Some(format!("{:?}", timestamp)), candid)
         };
         let info = Canister {
@@ -424,10 +430,10 @@ async fn download_mops_package(
     }
     try_join_all(futures).await?;
     fs::write(base_path.join("DONE"), "")?;
-    bar.println(format!(
-        "{:>12} {lib}@{version}",
-        style("Downloaded").green().bold()
-    ));
+    println(
+        &bar,
+        &format!("{:>12} {lib}@{version}", style("Downloaded").green().bold()),
+    );
     bar.inc(1);
     Ok(())
 }
