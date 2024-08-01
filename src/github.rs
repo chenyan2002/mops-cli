@@ -74,7 +74,8 @@ pub async fn download_github_package(
     try_join_all(futures).await?;
     fs::write(base_path.join(repo.get_done_file()), "")?;
     println(
-        &bar,
+        Some(&bar),
+        "stdout",
         &format!(
             "{:>12} {}@{}",
             style("Downloaded").green().bold(),

@@ -136,7 +136,8 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
             )?;
             let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
             println(
-                &bar,
+                Some(&bar),
+                "stdout",
                 &format!(
                     "{:>12} canister interface for {id}",
                     style("Fetched").green().bold()
@@ -431,7 +432,8 @@ async fn download_mops_package(
     try_join_all(futures).await?;
     fs::write(base_path.join("DONE"), "")?;
     println(
-        &bar,
+        Some(&bar),
+        "stdout",
         &format!("{:>12} {lib}@{version}", style("Downloaded").green().bold()),
     );
     bar.inc(1);

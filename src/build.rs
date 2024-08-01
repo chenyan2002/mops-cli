@@ -1,5 +1,5 @@
 use crate::toml::{download_packages_from_lock, generate_moc_args, update_mops_toml};
-use crate::utils::{create_spinner_bar, download_moc, exec, get_moc};
+use crate::utils::{create_spinner_bar, download_moc, exec, get_cache_dir, get_moc};
 use anyhow::{anyhow, Context, Result};
 use candid::Principal;
 use console::style;
@@ -12,15 +12,7 @@ use std::time::Instant;
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     let main_file = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
-    let cache_dir = if let Some(dir) = &args.cache_dir {
-        PathBuf::from(dir)
-    } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".mops")
-    } else {
-        return Err(anyhow!(
-            "Cannot find home directory, use --cache_dir to specify the cache directory."
-        ));
-    };
+    let cache_dir = get_cache_dir(&args.cache_dir)?;
     download_moc(&cache_dir).await?;
     let start = Instant::now();
     if !args.lock {
@@ -48,7 +40,7 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
             .arg("--public-metadata")
             .arg("candid:service");
     }
-    exec(moc, &bar)?;
+    exec(moc, Some(&bar))?;
     bar.finish_and_clear();
     let mut msg = format!(
         "{:>12} {} in {}",

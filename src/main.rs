@@ -13,6 +13,16 @@ mod utils;
 enum ClapCommand {
     /// Build Motoko project
     Build(BuildArg),
+    /// Calls the Motoko compiler
+    Moc(MocArg),
+}
+#[derive(Parser)]
+struct MocArg {
+    /// Directory to store external dependencies
+    pub cache_dir: Option<PathBuf>,
+    #[clap(last = true)]
+    /// Arguments passed to moc
+    extra_args: Vec<String>,
 }
 #[derive(Parser)]
 pub struct BuildArg {
@@ -38,6 +48,13 @@ fn main() -> Result<()> {
         .with_url("https://icp0.io")
         .build()?;
     match cmd {
+        ClapCommand::Moc(args) => {
+            use crate::utils::{exec, get_cache_dir, get_moc};
+            let cache_dir = get_cache_dir(&args.cache_dir)?;
+            let mut moc = get_moc(&cache_dir)?;
+            moc.args(&args.extra_args);
+            exec(moc, None)?;
+        }
         ClapCommand::Build(args) => {
             build::build(&agent, args)?;
         }

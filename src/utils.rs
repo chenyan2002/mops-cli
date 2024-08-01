@@ -4,9 +4,21 @@ use console::style;
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs::{self, File};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tar::Archive;
+
+pub fn get_cache_dir(base_path: &Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(dir) = base_path {
+        Ok(PathBuf::from(dir))
+    } else if let Ok(home) = std::env::var("HOME") {
+        Ok(PathBuf::from(home).join(".mops"))
+    } else {
+        return Err(anyhow!(
+            "Cannot find home directory, use --cache_dir to specify the cache directory."
+        ));
+    }
+}
 
 pub fn get_moc(base_path: &Path) -> Result<Command> {
     let cmd = Command::new(format!("{}/bin/moc", base_path.display()));
@@ -49,26 +61,31 @@ pub async fn download_moc(base_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn exec(mut cmd: Command, bar: &ProgressBar) -> Result<()> {
+pub fn exec(mut cmd: Command, bar: Option<&ProgressBar>) -> Result<()> {
     let output = cmd
         .output()
         .with_context(|| format!("Error executing {:#?}", cmd))?;
     if !output.stderr.is_empty() {
-        println(bar, &String::from_utf8_lossy(&output.stderr));
+        println(bar, "stderr", &String::from_utf8_lossy(&output.stderr));
     }
     if !output.stdout.is_empty() {
-        println(bar, &String::from_utf8_lossy(&output.stdout));
+        println(bar, "stdout", &String::from_utf8_lossy(&output.stdout));
     }
     if !output.status.success() {
         return Err(anyhow!("Exit with code {}", output.status));
     }
     Ok(())
 }
-pub fn println(bar: &ProgressBar, msg: &str) {
-    if bar.is_hidden() {
-        println!("{msg}");
+pub fn println(bar: Option<&ProgressBar>, target: &str, msg: &str) {
+    if bar.is_none() || bar.is_some_and(|bar| bar.is_hidden()) {
+        if target == "stderr" {
+            eprintln!("{msg}");
+        } else {
+            println!("{msg}");
+        }
     } else {
-        bar.println(msg);
+        #[allow(clippy::unnecessary_unwrap)]
+        bar.unwrap().println(msg);
     }
 }
 
