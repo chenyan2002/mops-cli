@@ -64,7 +64,17 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
                 }
                 let version = service.get_highest_version(&lib).await?.into_result();
                 match version {
-                    Ok(version) => doc["dependencies"][lib] = value(version),
+                    Ok(version) => {
+                        println(
+                            None,
+                            "stdout",
+                            &format!(
+                                "{:>12} mops.toml with {lib}@{version}",
+                                style("Updated").green().bold()
+                            ),
+                        );
+                        doc["dependencies"][lib] = value(version);
+                    }
                     Err(_) => unknown_libs.push(lib),
                 }
             }
@@ -88,6 +98,14 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
                     continue;
                 }
                 let mut table = toml_edit::Table::new();
+                println(
+                    None,
+                    "stdout",
+                    &format!(
+                        "{:>12} mops.toml with canister {id}",
+                        style("Updated").green().bold()
+                    ),
+                );
                 table.insert("canister_id", value(id.to_string()));
                 canisters.push(table);
             }
