@@ -81,11 +81,7 @@ fn get_imports(main_path: &Path, cache_dir: &Path) -> Result<BTreeSet<MotokoImpo
             .output()
             .with_context(|| format!("Error executing {:#?}", command))?;
         if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to get imports from {}: {}",
-                file.display(),
-                String::from_utf8_lossy(&output.stderr)
-            ));
+            return Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)));
         }
         let output = String::from_utf8_lossy(&output.stdout);
 
