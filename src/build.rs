@@ -16,7 +16,7 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     download_moc(&cache_dir).await?;
     let start = Instant::now();
     if !args.lock {
-        let imports = get_imports(&main_file, &cache_dir)?;
+        let imports = get_imports(&main_file, &cache_dir, args.print_source_on_error)?;
         update_mops_toml(agent, imports).await?;
         download_packages_from_lock(agent, &cache_dir).await?;
     }
@@ -28,6 +28,9 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     moc.arg(&main_file).args(pkgs);
     if let Some(out) = &args.output {
         moc.arg("-o").arg(out);
+    }
+    if args.print_source_on_error {
+        moc.arg("--print-source-on-error");
     }
     if !args.extra_args.is_empty() {
         for arg in args.extra_args {
@@ -65,10 +68,15 @@ pub enum MotokoImport {
     Lib(String),
     Local(PathBuf),
 }
-fn get_imports(main_path: &Path, cache_dir: &Path) -> Result<BTreeSet<MotokoImport>> {
+fn get_imports(
+    main_path: &Path,
+    cache_dir: &Path,
+    display_src: bool,
+) -> Result<BTreeSet<MotokoImport>> {
     fn get_imports_recursive(
         cache_dir: &Path,
         file: &Path,
+        display_src: bool,
         result: &mut BTreeSet<MotokoImport>,
     ) -> Result<()> {
         if result.contains(&MotokoImport::Local(file.to_path_buf())) {
@@ -76,12 +84,16 @@ fn get_imports(main_path: &Path, cache_dir: &Path) -> Result<BTreeSet<MotokoImpo
         }
         result.insert(MotokoImport::Local(file.to_path_buf()));
         let mut command = get_moc(cache_dir)?;
-        let command = command.arg("--print-deps").arg(file);
+        command.arg("--print-deps").arg(file);
+        if display_src {
+            command.arg("--print-source-on-error");
+        }
         let output = command
             .output()
             .with_context(|| format!("Error executing {:#?}", command))?;
         if !output.status.success() {
-            return Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)));
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("{err}"));
         }
         let output = String::from_utf8_lossy(&output.stdout);
 
@@ -89,7 +101,7 @@ fn get_imports(main_path: &Path, cache_dir: &Path) -> Result<BTreeSet<MotokoImpo
             let import = MotokoImport::try_from(line).context("Failed to parse import.")?;
             match import {
                 MotokoImport::Local(path) => {
-                    get_imports_recursive(cache_dir, path.as_path(), result)?;
+                    get_imports_recursive(cache_dir, path.as_path(), display_src, result)?;
                 }
                 _ => {
                     result.insert(import);
@@ -99,7 +111,7 @@ fn get_imports(main_path: &Path, cache_dir: &Path) -> Result<BTreeSet<MotokoImpo
         Ok(())
     }
     let mut result = BTreeSet::new();
-    get_imports_recursive(cache_dir, main_path, &mut result)?;
+    get_imports_recursive(cache_dir, main_path, display_src, &mut result)?;
     Ok(result)
 }
 

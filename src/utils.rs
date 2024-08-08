@@ -66,7 +66,8 @@ pub fn exec(mut cmd: Command, bar: Option<&ProgressBar>) -> Result<()> {
         .output()
         .with_context(|| format!("Error executing {:#?}", cmd))?;
     if !output.stderr.is_empty() {
-        println(bar, "stderr", &String::from_utf8_lossy(&output.stderr));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println(bar, "stderr", &stderr);
     }
     if !output.stdout.is_empty() {
         println(bar, "stdout", &String::from_utf8_lossy(&output.stdout));

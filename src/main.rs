@@ -37,6 +37,9 @@ pub struct BuildArg {
     #[arg(long)]
     /// Lock the dependencies
     pub lock: bool,
+    #[arg(short, long)]
+    /// Display the source code for error messages
+    pub print_source_on_error: bool,
     #[clap(last = true)]
     /// Extra arguments passed to moc. Default args are "--release --idl --stable-types --public-metadata candid:service". When extra arguments are provided, the default args are not included.
     extra_args: Vec<String>,
