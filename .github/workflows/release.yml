@@ -1,0 +1,96 @@
+name: Release
+on:
+  push:
+    tags:
+      - '*'
+    branches: # TODO: Remove before merging.
+      - fix-ci  # Pushing the feature branch should test this PR.
+jobs:
+  build:
+    name: Build for ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux64
+            artifact_name: target/x86_64-unknown-linux-musl/release/mops-cli
+            asset_name: mops-cli-linux64
+          - os: macos-12
+            name: macos
+            artifact_name: target/release/mops-cli
+            asset_name: mops-cli-macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Build
+        if: matrix.name == 'linux64'
+        run: |
+          docker run --rm -t \
+            -v $HOME/.cargo/registry/:/root/.cargo/registry \
+            -v "$(pwd)":/volume \
+            clux/muslrust:stable \
+            cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Build
+        if: matrix.name == 'macos'
+        run: cargo build --release --locked
+      - name: 'Upload assets'
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.artifact_name }}
+          retention-days: 3
+  test:
+    needs: build
+    name: Test for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset_name: mops-cli-linux64
+          - os: ubuntu-20.04
+            asset_name: mops-cli-linux64
+          - os: macos-13
+            asset_name: mops-cli-macos
+          - os: macos-12
+            asset_name: mops-cli-macos
+    steps:
+      - name: Get executable
+        id: download
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+      - name: Executable runs
+        run: |
+          chmod +x mops-cli
+          ./mops-cli --help
+  publish:
+    needs: test
+    name: Publish ${{ matrix.asset_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset_name: mops-cli-linux64
+          - asset_name: mops-cli-macos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get executable
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: mops-cli
+          asset_name: ${{ matrix.asset_name }}
+          tag: ${{ github.ref }}
