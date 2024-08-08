@@ -34,7 +34,7 @@ jobs:
         run: |
           set -x
           sudo apt-get update -yy
-          sudo apt-get install -yy musl musl-dev musl-tools
+          sudo apt-get install -yy musl musl-dev musl-tools libssl-dev
           rustup target add x86_64-unknown-linux-musl
           cargo build --release --locked --target x86_64-unknown-linux-musl
       - name: Build
