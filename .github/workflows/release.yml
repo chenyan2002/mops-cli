@@ -31,10 +31,9 @@ jobs:
           override: true
       - name: Build
         if: matrix.name == 'linux64'
-        uses: docker://ekidd/rust-musl-builder:latest
-        with:
-          entrypoint: /bin/bash
-          args: -c "cargo build --release --locked --target x86_64-unknown-linux-musl && chown -R $(id -u):$(id -g) ."
+        run: |
+          docker run --rm -v "$(pwd)":/home/rust/src ekidd/rust-musl-builder:latest cargo build --release --locked
+          sudo chown -R $(id -u):$(id -g) .
       - name: Build
         if: matrix.name == 'macos'
         run: cargo build --release --locked
