@@ -13,10 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             name: linux64
-            #artifact_name: target/x86_64-unknown-linux-musl/release/mops-cli
-            artifact_name: target/release/mops-cli
+            artifact_name: target/x86_64-unknown-linux-musl/release/mops-cli
             asset_name: mops-cli-linux64
           - os: macos-12
             name: macos
@@ -35,10 +34,9 @@ jobs:
         run: |
           set -x
           sudo apt-get update -yy
-          sudo apt-get install -yy musl musl-dev musl-tools 
-          #rustup target add x86_64-unknown-linux-musl
-          #cargo build --release --locked --target x86_64-unknown-linux-musl
-          cargo build --release --locked
+          sudo apt-get install -yy musl musl-dev musl-tools pkg-config
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --release --locked --target x86_64-unknown-linux-musl
       - name: Build
         if: matrix.name == 'macos'
         run: cargo build --release --locked
