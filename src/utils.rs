@@ -27,9 +27,6 @@ pub fn get_moc(base_path: &Path) -> Result<Command> {
 
 pub async fn download_moc(base_path: &Path) -> Result<()> {
     use std::io::Write;
-    if base_path.join("bin/moc").exists() {
-        return Ok(());
-    }
     let bar = create_spinner_bar("Downloading moc");
     let tag = get_latest_release_tag("dfinity/motoko").await?;
     let platform = if cfg!(target_os = "macos") {
@@ -61,7 +58,7 @@ pub async fn download_moc(base_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn exec(mut cmd: Command, bar: Option<&ProgressBar>) -> Result<()> {
+pub fn exec(mut cmd: Command, is_silence: bool, bar: Option<&ProgressBar>) -> Result<String> {
     let output = cmd
         .output()
         .with_context(|| format!("Error executing {:#?}", cmd))?;
@@ -69,13 +66,14 @@ pub fn exec(mut cmd: Command, bar: Option<&ProgressBar>) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         println(bar, "stderr", &stderr);
     }
-    if !output.stdout.is_empty() {
-        println(bar, "stdout", &String::from_utf8_lossy(&output.stdout));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !is_silence && !stdout.is_empty() {
+        println(bar, "stdout", &stdout);
     }
     if !output.status.success() {
         return Err(anyhow!("Exit with code {}", output.status));
     }
-    Ok(())
+    Ok(stdout.to_string())
 }
 pub fn println(bar: Option<&ProgressBar>, target: &str, msg: &str) {
     if bar.is_none() || bar.is_some_and(|bar| bar.is_hidden()) {

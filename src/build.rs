@@ -9,11 +9,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
     let main_file = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
     let cache_dir = get_cache_dir(&args.cache_dir)?;
-    download_moc(&cache_dir).await?;
+    if !cache_dir.join("bin/moc").exists() {
+        download_moc(&cache_dir).await?;
+    }
     let start = Instant::now();
     if !args.lock {
         let imports = get_imports(&main_file, &cache_dir, args.print_source_on_error)?;
@@ -43,7 +44,7 @@ pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
             .arg("--public-metadata")
             .arg("candid:service");
     }
-    exec(moc, Some(&bar))?;
+    exec(moc, false, Some(&bar))?;
     bar.finish_and_clear();
     let mut msg = format!(
         "{:>12} {} in {}",
@@ -88,15 +89,7 @@ fn get_imports(
         if display_src {
             command.arg("--print-source-on-error");
         }
-        let output = command
-            .output()
-            .with_context(|| format!("Error executing {:#?}", command))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("{err}"));
-        }
-        let output = String::from_utf8_lossy(&output.stdout);
-
+        let output = exec(command, true, None)?;
         for line in output.lines() {
             let import = MotokoImport::try_from(line).context("Failed to parse import.")?;
             match import {

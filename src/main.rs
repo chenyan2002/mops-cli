@@ -9,12 +9,24 @@ mod storage;
 mod toml;
 mod utils;
 
+use crate::utils::{download_moc, exec, get_cache_dir, get_moc};
+
 #[derive(Parser)]
 enum ClapCommand {
     /// Build Motoko project
     Build(BuildArg),
     /// Calls the Motoko compiler
     Moc(MocArg),
+    /// Update the dependencies or the Motoko compiler
+    Update(UpdateArg),
+}
+#[derive(Parser)]
+struct UpdateArg {
+    /// Directory to store external dependencies
+    pub cache_dir: Option<PathBuf>,
+    #[arg(short, long)]
+    /// Download the latest Motoko compiler
+    pub moc: bool,
 }
 #[derive(Parser)]
 struct MocArg {
@@ -45,21 +57,34 @@ pub struct BuildArg {
     extra_args: Vec<String>,
 }
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+async fn main() -> Result<()> {
     let cmd = ClapCommand::parse();
     let agent = ic_agent::Agent::builder()
         .with_url("https://icp0.io")
         .build()?;
     match cmd {
         ClapCommand::Moc(args) => {
-            use crate::utils::{exec, get_cache_dir, get_moc};
             let cache_dir = get_cache_dir(&args.cache_dir)?;
             let mut moc = get_moc(&cache_dir)?;
             moc.args(&args.extra_args);
-            exec(moc, None)?;
+            exec(moc, false, None)?;
         }
         ClapCommand::Build(args) => {
-            build::build(&agent, args)?;
+            build::build(&agent, args).await?;
+        }
+        ClapCommand::Update(args) => {
+            let cache_dir = get_cache_dir(&args.cache_dir)?;
+            if args.moc {
+                let mut moc = get_moc(&cache_dir)?;
+                moc.arg("--version");
+                let version = exec(moc, true, None)?;
+                let tag = github::get_latest_release_tag("dfinity/motoko").await?;
+                println!("Current version: {version}Latest release: {tag}");
+                download_moc(&cache_dir).await?;
+            } else {
+                unimplemented!();
+            }
         }
     }
     Ok(())
