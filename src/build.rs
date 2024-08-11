@@ -130,7 +130,10 @@ impl TryFrom<&str> for MotokoImport {
                 let (prefix, name) = url.split_at(index + 1);
                 match prefix {
                     "canister:" => MotokoImport::Canister(name.to_owned()),
-                    "ic:" => MotokoImport::Ic(Principal::from_text(name)?),
+                    "ic:" => MotokoImport::Ic(
+                        Principal::from_text(name)
+                            .context(format!("Fail to parse import {url}"))?,
+                    ),
                     "mo:" => match name.split_once('/') {
                         Some((lib, _)) => MotokoImport::Lib(lib.to_owned()),
                         None => MotokoImport::Lib(name.to_owned()),

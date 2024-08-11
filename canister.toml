@@ -1,7 +1,7 @@
 [imports.mops]
 canister_id = "oknww-riaaa-aaaam-qaf6a-cai"
 template = "agent.hbs"
-methods = ["getHighestVersion", "getPackageDetails", "getFileIds"]
+methods = ["getHighestVersion", "getHighestSemverBatch", "getPackageDetails", "getFileIds"]
 [imports.mops.bindgen]
 attributes = "#[derive(CandidType, Deserialize, Debug)]"
 

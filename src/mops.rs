@@ -9,6 +9,16 @@ pub type PackageVersion = String;
 pub type FileId = String;
 pub type Err = String;
 pub type Result7 = candid::MotokoResult<Vec<FileId>, Err>;
+#[derive(CandidType, Deserialize, Debug)]
+pub enum SemverPart {
+    #[serde(rename = "major")]
+    Major,
+    #[serde(rename = "minor")]
+    Minor,
+    #[serde(rename = "patch")]
+    Patch,
+}
+pub type Result6 = candid::MotokoResult<Vec<(PackageName, PackageVersion)>, Err>;
 pub type Result5 = candid::MotokoResult<PackageVersion, Err>;
 pub type BenchmarkMetric = String;
 #[derive(CandidType, Deserialize, Debug)]
@@ -126,6 +136,8 @@ pub struct PackageSummary1 {
     #[serde(rename = "ownerInfo")]
     pub owner_info: User,
     pub owner: Principal,
+    #[serde(rename = "depAlias")]
+    pub dep_alias: String,
     pub quality: PackageQuality,
     #[serde(rename = "downloadsTotal")]
     pub downloads_total: candid::Nat,
@@ -189,6 +201,8 @@ pub struct PackageSummaryWithChanges1 {
     #[serde(rename = "ownerInfo")]
     pub owner_info: User,
     pub owner: Principal,
+    #[serde(rename = "depAlias")]
+    pub dep_alias: String,
     pub quality: PackageQuality,
     #[serde(rename = "downloadsTotal")]
     pub downloads_total: candid::Nat,
@@ -206,6 +220,8 @@ pub struct PackageDetails {
     #[serde(rename = "ownerInfo")]
     pub owner_info: User,
     pub owner: Principal,
+    #[serde(rename = "depAlias")]
+    pub dep_alias: String,
     pub deps: Vec<PackageSummary1>,
     pub quality: PackageQuality,
     #[serde(rename = "testStats")]
@@ -242,6 +258,19 @@ impl<'a> Service<'a> {
             .call()
             .await?;
         Ok(Decode!(&bytes, Result7)?)
+    }
+    pub async fn get_highest_semver_batch(
+        &self,
+        arg0: &Vec<(PackageName, PackageVersion, SemverPart)>,
+    ) -> Result<Result6> {
+        let args = Encode!(&arg0)?;
+        let bytes = self
+            .1
+            .query(&self.0, "getHighestSemverBatch")
+            .with_arg(args)
+            .call()
+            .await?;
+        Ok(Decode!(&bytes, Result6)?)
     }
     pub async fn get_highest_version(&self, arg0: &PackageName) -> Result<Result5> {
         let args = Encode!(&arg0)?;
