@@ -19,6 +19,8 @@ enum ClapCommand {
     Moc(MocArg),
     /// Update the dependencies or the Motoko compiler
     Update(UpdateArg),
+    /// Motoko formatter
+    Fmt(FmtArg),
 }
 #[derive(Parser)]
 struct UpdateArg {
@@ -29,11 +31,18 @@ struct UpdateArg {
     pub moc: bool,
 }
 #[derive(Parser)]
+struct FmtArg {
+    #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+    /// Arguments passed to mo-fmt. No need to add "--" before the arguments.
+    extra_args: Vec<String>,
+}
+#[derive(Parser)]
 struct MocArg {
+    #[arg(short, long)]
     /// Directory to store external dependencies
     pub cache_dir: Option<PathBuf>,
-    #[clap(last = true)]
-    /// Arguments passed to moc
+    #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+    /// Arguments passed to moc. No need to add "--" before the arguments.
     extra_args: Vec<String>,
 }
 #[derive(Parser)]
@@ -53,7 +62,7 @@ pub struct BuildArg {
     /// Display the source code for error messages
     pub print_source_on_error: bool,
     #[clap(last = true)]
-    /// Extra arguments passed to moc. Default args are "--release --idl --stable-types --public-metadata candid:service". When extra arguments are provided, the default args are not included.
+    /// Extra arguments passed to moc. Need to add "--" before the arguments. Default args are "--release --idl --stable-types --public-metadata candid:service". When extra arguments are provided, the default args are not included.
     extra_args: Vec<String>,
 }
 
@@ -85,6 +94,12 @@ async fn main() -> Result<()> {
             } else {
                 unimplemented!();
             }
+        }
+        ClapCommand::Fmt(args) => {
+            let cache_dir = get_cache_dir(&None)?;
+            let mut fmt = std::process::Command::new(cache_dir.join("bin/mo-fmt"));
+            fmt.args(&args.extra_args);
+            exec(fmt, false, None)?;
         }
     }
     Ok(())

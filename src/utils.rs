@@ -24,11 +24,38 @@ pub fn get_moc(base_path: &Path) -> Result<Command> {
     let cmd = Command::new(format!("{}/bin/moc", base_path.display()));
     Ok(cmd)
 }
-
-pub async fn download_moc(base_path: &Path) -> Result<()> {
+async fn download_release(
+    base_path: &Path,
+    name: &str,
+    repo: &str,
+    url: &str,
+    platform: &str,
+) -> Result<()> {
     use std::io::Write;
-    let bar = create_spinner_bar("Downloading moc");
-    let tag = get_latest_release_tag("dfinity/motoko").await?;
+    let bar = create_spinner_bar(format!("Downloading {}", repo));
+    let tag = get_latest_release_tag(repo).await?;
+    bar.set_message(format!("Downloading {name} {tag}"));
+    let url = url.replace("{tag}", &tag).replace("{platform}", platform);
+    let response = reqwest::get(url).await?;
+    let gz_file = base_path.join(format!("bin/{}-{}.tar.gz", name, tag));
+    fs::create_dir_all(gz_file.parent().unwrap())?;
+    let mut file = File::create(&gz_file)?;
+    let content = response.bytes().await?;
+    file.write_all(&content)?;
+    bar.set_message(format!("Decompressing {name} {tag}"));
+    let gz = File::open(&gz_file)?;
+    let tar = GzDecoder::new(gz);
+    let mut archive = Archive::new(tar);
+    archive.unpack(base_path.join("bin"))?;
+    fs::remove_file(&gz_file)?;
+    bar.set_message(format!(
+        "{:>12} {name} {tag}",
+        style("Installed").green().bold()
+    ));
+    bar.finish();
+    Ok(())
+}
+pub async fn download_moc(base_path: &Path) -> Result<()> {
     let platform = if cfg!(target_os = "macos") {
         "Darwin"
     } else if cfg!(target_os = "linux") {
@@ -36,25 +63,24 @@ pub async fn download_moc(base_path: &Path) -> Result<()> {
     } else {
         anyhow::bail!("Unsupported platform");
     };
-    let url = format!("https://github.com/dfinity/motoko/releases/download/{tag}/motoko-{platform}-x86_64-{tag}.tar.gz");
-    bar.set_message(format!("Downloading moc {tag}"));
-    let response = reqwest::get(url).await?;
-    let gz_file = base_path.join(format!("bin/moc-{tag}.tar.gz"));
-    fs::create_dir_all(gz_file.parent().unwrap())?;
-    let mut file = File::create(&gz_file)?;
-    let content = response.bytes().await?;
-    file.write_all(&content)?;
-    bar.set_message(format!("Decompressing moc {tag}"));
-    let gz = File::open(&gz_file)?;
-    let tar = GzDecoder::new(gz);
-    let mut archive = Archive::new(tar);
-    archive.unpack(base_path.join("bin"))?;
-    fs::remove_file(&gz_file)?;
-    bar.set_message(format!(
-        "{:>12} moc {tag}",
-        style("Installed").green().bold()
-    ));
-    bar.finish();
+    let url = "https://github.com/dfinity/motoko/releases/download/{tag}/motoko-{platform}-x86_64-{tag}.tar.gz";
+    download_release(base_path, "moc", "dfinity/motoko", &url, &platform).await?;
+    let platform = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        anyhow::bail!("Unsupported platform");
+    };
+    let url = "https://github.com/dfinity/prettier-plugin-motoko/releases/download/{tag}/mo-fmt-{platform}.tar.gz";
+    download_release(
+        base_path,
+        "mo-fmt",
+        "dfinity/prettier-plugin-motoko",
+        &url,
+        &platform,
+    )
+    .await?;
     Ok(())
 }
 
