@@ -1,6 +1,7 @@
 use crate::build::MotokoImport;
 use crate::github::{download_github_package, fetch_file, parse_github_url, RepoInfo};
 use crate::{
+    env::Env,
     mops, storage,
     utils::{create_bar, println},
 };
@@ -40,8 +41,12 @@ struct Packages {
     canister: Option<Vec<Canister>>,
 }
 
-pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Result<()> {
-    let mops = Path::new("mops.toml");
+pub async fn update_mops_toml(
+    agent: &Agent,
+    env: &Env,
+    libs: BTreeSet<MotokoImport>,
+) -> Result<()> {
+    let mops = &env.get_mops_toml_path();
     let mut doc = if mops.exists() {
         let str = fs::read_to_string(mops)?;
         str.parse::<DocumentMut>()?
@@ -116,12 +121,12 @@ pub async fn update_mops_toml(agent: &Agent, libs: BTreeSet<MotokoImport>) -> Re
     if !unknown_libs.is_empty() {
         return Err(anyhow!("The following imports cannot be found on mops. Please manually add it to mops.toml:\n{unknown_libs:?}"));
     }
-    update_mops_lock(agent).await?;
+    update_mops_lock(agent, env).await?;
     Ok(())
 }
-async fn update_mops_lock(agent: &Agent) -> Result<()> {
-    let lock = Path::new("mops.lock");
-    let pkgs = parse_mops_lock(lock).unwrap_or_default();
+async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
+    let lock = env.get_mops_lock_path();
+    let pkgs = parse_mops_lock(&lock).unwrap_or_default();
     let mut map: BTreeMap<_, _> = pkgs.package.into_iter().map(|p| (p.get_key(), p)).collect();
     let mut canisters: BTreeMap<_, _> = pkgs
         .canister
@@ -129,7 +134,7 @@ async fn update_mops_lock(agent: &Agent) -> Result<()> {
         .into_iter()
         .map(|c| (c.get_key(), c))
         .collect();
-    let str = fs::read_to_string(Path::new("mops.toml"))?;
+    let str = fs::read_to_string(env.get_mops_toml_path())?;
     let toml = parse_mops_toml(&str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
     let bar = create_bar(toml.dependencies.len() + toml.canisters.len());
@@ -350,13 +355,14 @@ fn resolve_error(p1: &Package, p2: &Package) -> String {
         style(&p2).green()
     )
 }
-pub fn generate_moc_args(base_path: &Path) -> Result<Vec<String>> {
-    let lock = parse_mops_lock(Path::new("mops.lock")).unwrap_or_default();
+pub fn generate_moc_args(env: &Env) -> Result<Vec<String>> {
+    let lock = parse_mops_lock(&env.get_mops_lock_path()).unwrap_or_default();
     let mut args: Vec<_> = lock
         .package
         .into_iter()
         .flat_map(|pkg| {
-            let path = base_path
+            let path = env
+                .cache_dir
                 .join(pkg.get_path())
                 .join(pkg.base_dir)
                 .to_string_lossy()
@@ -365,11 +371,12 @@ pub fn generate_moc_args(base_path: &Path) -> Result<Vec<String>> {
         })
         .collect();
     if let Some(canisters) = lock.canister {
+        let idl_path = env.get_target_idl_path();
         if !canisters.is_empty() {
-            args.extend_from_slice(&["--actor-idl".to_string(), ".mops/candid".to_string()]);
+            args.extend_from_slice(&["--actor-idl".to_string(), idl_path.display().to_string()]);
         }
         for c in canisters {
-            let file = Path::new(".mops/candid").join(format!("{}.did", c.canister_id));
+            let file = idl_path.join(format!("{}.did", c.canister_id));
             fs::create_dir_all(file.parent().unwrap())?;
             if c.timestamp.is_none() {
                 let candid = fs::read_to_string(c.candid)?;
@@ -384,9 +391,9 @@ pub fn generate_moc_args(base_path: &Path) -> Result<Vec<String>> {
     }
     Ok(args)
 }
-pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<()> {
-    let lock = Path::new("mops.lock");
-    let pkgs = parse_mops_lock(lock)?.package;
+pub async fn download_packages_from_lock(agent: &Agent, env: &Env) -> Result<()> {
+    let lock = env.get_mops_lock_path();
+    let pkgs = parse_mops_lock(&lock)?.package;
     let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
     let bar = Rc::new(create_bar(pkgs.len()));
     bar.set_prefix("Downloading packages");
@@ -395,7 +402,7 @@ pub async fn download_packages_from_lock(agent: &Agent, root: &Path) -> Result<(
     for pkg in pkgs {
         bar.set_message(pkg.name.clone());
         let subpath = pkg.get_path();
-        let path = root.join(subpath);
+        let path = env.cache_dir.join(subpath);
         if path.join(pkg.get_done_file()).exists() {
             bar.inc(1);
             continue;

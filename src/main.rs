@@ -3,13 +3,22 @@ use clap::Parser;
 use std::path::PathBuf;
 
 mod build;
+mod env;
 mod github;
 mod mops;
 mod storage;
 mod toml;
 mod utils;
 
-use crate::utils::{download_moc, exec, get_cache_dir, get_moc};
+use crate::utils::exec;
+#[derive(Parser)]
+struct Opts {
+    #[arg(short, long)]
+    /// Directory to cache external dependencies
+    cache_dir: Option<PathBuf>,
+    #[command(subcommand)]
+    cmd: ClapCommand,
+}
 
 #[derive(Parser)]
 enum ClapCommand {
@@ -24,8 +33,6 @@ enum ClapCommand {
 }
 #[derive(Parser)]
 struct UpdateArg {
-    /// Directory to store external dependencies
-    pub cache_dir: Option<PathBuf>,
     #[arg(short, long)]
     /// Download the latest Motoko compiler
     pub moc: bool,
@@ -38,9 +45,6 @@ struct FmtArg {
 }
 #[derive(Parser)]
 struct MocArg {
-    #[arg(short, long)]
-    /// Directory to store external dependencies
-    pub cache_dir: Option<PathBuf>,
     #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
     /// Arguments passed to moc. No need to add "--" before the arguments.
     extra_args: Vec<String>,
@@ -50,11 +54,8 @@ pub struct BuildArg {
     /// The path to the main Motoko file
     pub main: Option<PathBuf>,
     #[arg(short, long)]
-    /// Directory to store external dependencies
-    pub cache_dir: Option<PathBuf>,
-    #[arg(short, long)]
-    /// Output Wasm file path
-    pub output: Option<String>,
+    /// Output Wasm file path at target/<name>/
+    pub name: Option<String>,
     #[arg(long)]
     /// Lock the dependencies
     pub lock: bool,
@@ -68,36 +69,34 @@ pub struct BuildArg {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> Result<()> {
-    let cmd = ClapCommand::parse();
+    let opts = Opts::parse();
+    let env = env::Env::new(&opts.cache_dir).await?;
     let agent = ic_agent::Agent::builder()
         .with_url("https://icp0.io")
         .build()?;
-    match cmd {
+    match opts.cmd {
         ClapCommand::Moc(args) => {
-            let cache_dir = get_cache_dir(&args.cache_dir)?;
-            let mut moc = get_moc(&cache_dir)?;
+            let mut moc = env.get_moc();
             moc.args(&args.extra_args);
             exec(moc, false, None)?;
         }
         ClapCommand::Build(args) => {
-            build::build(&agent, args).await?;
+            build::build(&agent, &env, args).await?;
         }
         ClapCommand::Update(args) => {
-            let cache_dir = get_cache_dir(&args.cache_dir)?;
             if args.moc {
-                let mut moc = get_moc(&cache_dir)?;
+                let mut moc = env.get_moc();
                 moc.arg("--version");
                 let version = exec(moc, true, None)?;
                 let tag = github::get_latest_release_tag("dfinity/motoko").await?;
                 println!("Current version: {version}Latest release: {tag}");
-                download_moc(&cache_dir).await?;
+                crate::env::download_moc(&env.cache_dir).await?;
             } else {
                 unimplemented!();
             }
         }
         ClapCommand::Fmt(args) => {
-            let cache_dir = get_cache_dir(&None)?;
-            let mut fmt = std::process::Command::new(cache_dir.join("bin/mo-fmt"));
+            let mut fmt = env.get_fmt();
             fmt.args(&args.extra_args);
             exec(fmt, false, None)?;
         }
