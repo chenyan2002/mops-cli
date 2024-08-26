@@ -63,20 +63,30 @@ impl Env {
     pub fn get_fmt(&self) -> Command {
         Command::new(self.get_fmt_path())
     }
-    pub async fn check_moc_version(&self) -> Option<()> {
-        if self.get_moc_path().exists() {
-            let mut moc = self.get_moc();
-            moc.arg("--version");
-            let moc_version = crate::utils::exec(moc, true, None).ok()?.trim().to_owned();
-            let tag = crate::github::get_latest_release_info("dfinity/motoko")
+    pub async fn check_version(&self, bin: &str, repo: &str) -> Option<()> {
+        let path = self.get_binary_path().join(bin);
+        if path.exists() {
+            let mut cmd = Command::new(path);
+            cmd.arg("--version");
+            let version = crate::utils::exec(cmd, true, None)
+                .ok()?
+                .trim()
+                .trim()
+                .to_owned();
+            let tag = crate::github::get_latest_release_info(repo)
                 .await
                 .ok()?
                 .tag_name;
-            if moc_version.contains(&tag) {
-                println!("Current version: {moc_version} is up to date.");
+            let tag = if let Some(tag) = tag.strip_prefix('v') {
+                tag
+            } else {
+                &tag
+            };
+            if version.contains(tag) {
+                println!("{version} is up to date.");
                 Some(())
             } else {
-                println!("Current version: {moc_version}\nLatest release: {tag}");
+                println!("{version}\nLatest release: {tag}");
                 None
             }
         } else {

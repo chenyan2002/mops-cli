@@ -85,9 +85,16 @@ async fn main() -> Result<()> {
         }
         ClapCommand::Update(args) => {
             if args.moc {
-                use crate::env::download_moc;
-                if env.check_moc_version().await.is_none() {
+                use crate::env::{download_fmt, download_moc};
+                if env.check_version("moc", "dfinity/motoko").await.is_none() {
                     download_moc(&env).await?;
+                }
+                if env
+                    .check_version("mo-fmt", "dfinity/prettier-plugin-motoko")
+                    .await
+                    .is_none()
+                {
+                    download_fmt(&env).await?;
                 }
             } else {
                 unimplemented!();
