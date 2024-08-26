@@ -128,15 +128,22 @@ async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
     let response = serde_json::from_str::<Commit>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
     Ok(response.sha)
 }
-pub async fn get_latest_release_tag(repo: &str) -> Result<String> {
-    #[derive(Deserialize)]
-    struct Release {
-        tag_name: String,
-    }
+#[derive(Deserialize)]
+pub struct ReleaseInfo {
+    pub tag_name: String,
+    pub assets: Vec<Asset>,
+}
+#[derive(Deserialize)]
+pub struct Asset {
+    pub size: u64,
+    pub browser_download_url: String,
+}
+pub async fn get_latest_release_info(repo: &str) -> Result<ReleaseInfo> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
     let body = github_request(&url).await?;
-    let response = serde_json::from_str::<Release>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
-    Ok(response.tag_name)
+    let response =
+        serde_json::from_str::<ReleaseInfo>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
+    Ok(response)
 }
 
 async fn get_file_list(repo: &RepoInfo) -> Result<Vec<String>> {
@@ -188,5 +195,13 @@ impl RepoInfo {
         } else {
             None
         }
+    }
+}
+impl ReleaseInfo {
+    pub fn get_asset_size(&self, url: &str) -> Option<u64> {
+        self.assets
+            .iter()
+            .find(|asset| asset.browser_download_url == url)
+            .map(|asset| asset.size)
     }
 }

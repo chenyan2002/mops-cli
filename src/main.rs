@@ -54,7 +54,7 @@ pub struct BuildArg {
     /// The path to the main Motoko file
     pub main: Option<PathBuf>,
     #[arg(short, long)]
-    /// Output Wasm file path at target/<name>/
+    /// Output Wasm file path at target/<name>/. Can be overridden by specifying "-- -o output.wasm".
     pub name: Option<String>,
     #[arg(long)]
     /// Lock the dependencies
@@ -85,12 +85,10 @@ async fn main() -> Result<()> {
         }
         ClapCommand::Update(args) => {
             if args.moc {
-                let mut moc = env.get_moc();
-                moc.arg("--version");
-                let version = exec(moc, true, None)?;
-                let tag = github::get_latest_release_tag("dfinity/motoko").await?;
-                println!("Current version: {version}Latest release: {tag}");
-                crate::env::download_moc(&env.cache_dir).await?;
+                use crate::env::download_moc;
+                if env.check_moc_version().await.is_none() {
+                    download_moc(&env).await?;
+                }
             } else {
                 unimplemented!();
             }

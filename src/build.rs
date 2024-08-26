@@ -28,8 +28,12 @@ pub async fn build(agent: &Agent, env: &Env, args: crate::BuildArg) -> Result<()
     let bar = create_spinner_bar(msg);
     let mut moc = env.get_moc();
     moc.arg(&main_file).args(pkgs);
-    let output = env.get_target_build_path(&args.name, &main_file);
-    moc.arg("-o").arg(output);
+    if !args.extra_args.contains(&"-o".to_string()) {
+        let output = env.get_target_build_path(&args.name, &main_file);
+        std::fs::create_dir_all(output.parent().unwrap())
+            .context("Failed to create output directory.")?;
+        moc.arg("-o").arg(output);
+    }
     if args.print_source_on_error {
         moc.arg("--print-source-on-error");
     }
