@@ -1,5 +1,6 @@
+use crate::env::Env;
 use crate::toml::{download_packages_from_lock, generate_moc_args, update_mops_toml};
-use crate::utils::{create_spinner_bar, download_moc, exec, get_cache_dir, get_moc};
+use crate::utils::{create_spinner_bar, exec};
 use anyhow::{anyhow, Context, Result};
 use candid::Principal;
 use console::style;
@@ -9,26 +10,29 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub async fn build(agent: &Agent, args: crate::BuildArg) -> Result<()> {
-    let main_file = args.main.unwrap_or_else(|| PathBuf::from("main.mo"));
-    let cache_dir = get_cache_dir(&args.cache_dir)?;
-    if !cache_dir.join("bin/moc").exists() {
-        download_moc(&cache_dir).await?;
-    }
+pub async fn build(agent: &Agent, env: &Env, args: crate::BuildArg) -> Result<()> {
+    let main_file = if let Some(file) = args.main {
+        file
+    } else {
+        crate::env::guess_main_file()?
+    };
     let start = Instant::now();
     if !args.lock {
-        let imports = get_imports(&main_file, &cache_dir, args.print_source_on_error)?;
-        update_mops_toml(agent, imports).await?;
-        download_packages_from_lock(agent, &cache_dir).await?;
+        let imports = get_imports(&main_file, env, args.print_source_on_error)?;
+        update_mops_toml(agent, env, imports).await?;
+        download_packages_from_lock(agent, env).await?;
     }
     let lock_time = start.elapsed();
-    let pkgs = generate_moc_args(&cache_dir)?;
+    let pkgs = generate_moc_args(env)?;
     let msg = format!("{:>12} {}", style("Compiling").cyan(), main_file.display());
     let bar = create_spinner_bar(msg);
-    let mut moc = get_moc(&cache_dir)?;
+    let mut moc = env.get_moc();
     moc.arg(&main_file).args(pkgs);
-    if let Some(out) = &args.output {
-        moc.arg("-o").arg(out);
+    if !args.extra_args.contains(&"-o".to_string()) {
+        let output = env.get_target_build_path(&args.name, &main_file);
+        std::fs::create_dir_all(output.parent().unwrap())
+            .context("Failed to create output directory.")?;
+        moc.arg("-o").arg(output);
     }
     if args.print_source_on_error {
         moc.arg("--print-source-on-error");
@@ -69,13 +73,9 @@ pub enum MotokoImport {
     Lib(String),
     Local(PathBuf),
 }
-fn get_imports(
-    main_path: &Path,
-    cache_dir: &Path,
-    display_src: bool,
-) -> Result<BTreeSet<MotokoImport>> {
+fn get_imports(main_path: &Path, env: &Env, display_src: bool) -> Result<BTreeSet<MotokoImport>> {
     fn get_imports_recursive(
-        cache_dir: &Path,
+        env: &Env,
         file: &Path,
         display_src: bool,
         result: &mut BTreeSet<MotokoImport>,
@@ -84,7 +84,7 @@ fn get_imports(
             return Ok(());
         }
         result.insert(MotokoImport::Local(file.to_path_buf()));
-        let mut command = get_moc(cache_dir)?;
+        let mut command = env.get_moc();
         command.arg("--print-deps").arg(file);
         if display_src {
             command.arg("--print-source-on-error");
@@ -94,7 +94,7 @@ fn get_imports(
             let import = MotokoImport::try_from(line).context("Failed to parse import.")?;
             match import {
                 MotokoImport::Local(path) => {
-                    get_imports_recursive(cache_dir, path.as_path(), display_src, result)?;
+                    get_imports_recursive(env, path.as_path(), display_src, result)?;
                 }
                 _ => {
                     result.insert(import);
@@ -104,7 +104,7 @@ fn get_imports(
         Ok(())
     }
     let mut result = BTreeSet::new();
-    get_imports_recursive(cache_dir, main_path, display_src, &mut result)?;
+    get_imports_recursive(env, main_path, display_src, &mut result)?;
     Ok(result)
 }
 
