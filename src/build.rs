@@ -96,6 +96,7 @@ fn get_imports(main_path: &Path, env: &Env, display_src: bool) -> Result<BTreeSe
                 MotokoImport::Local(path) => {
                     get_imports_recursive(env, path.as_path(), display_src, result)?;
                 }
+                MotokoImport::Lib(lib) if lib == "⛔" => (),
                 _ => {
                     result.insert(import);
                 }
