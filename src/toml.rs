@@ -136,7 +136,7 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
         .map(|c| (c.get_key(), c))
         .collect();
     let str = fs::read_to_string(env.get_mops_toml_path())?;
-    let toml = parse_mops_toml(&str)?;
+    let toml = parse_mops_toml(&env.project_root, &str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
     let bar = create_bar(toml.dependencies.len() + toml.canisters.len());
     bar.set_prefix("Updating mops.lock");
@@ -235,7 +235,8 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
                 }
                 let mut version = None;
                 let dependencies = if let Ok(str) = fetch_file(&repo_info, "mops.toml").await {
-                    let mops = parse_mops_toml(&str)?;
+                    // I hope the base_path here is irrelevant, so we can just use cwd
+                    let mops = parse_mops_toml(Path::new("."), &str)?;
                     version = mops.version;
                     // TODO remove Mops::Local
                     mops.dependencies
@@ -274,7 +275,7 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
                 let mut version = None;
                 let mops = if toml.exists() {
                     let str = fs::read_to_string(toml)?;
-                    let mops = parse_mops_toml(&str)?;
+                    let mops = parse_mops_toml(&canonicalized, &str)?;
                     version = mops.version;
                     mops.dependencies
                 } else {
@@ -522,7 +523,7 @@ struct MopsConfig {
     dependencies: Vec<Mops>,
     canisters: Vec<CanisterInfo>,
 }
-fn parse_mops_toml(str: &str) -> Result<MopsConfig> {
+fn parse_mops_toml(base_path: &Path, str: &str) -> Result<MopsConfig> {
     let doc = str.parse::<ImDocument<_>>()?;
     let mut mops = Vec::new();
     let mut version = None;
@@ -565,12 +566,22 @@ fn parse_mops_toml(str: &str) -> Result<MopsConfig> {
             .get(field)
             .map(|f| f.as_value().unwrap().as_str().unwrap().to_string())
     }
+    fn resolve_path(base_path: &Path, path: &str) -> String {
+        let mut path = PathBuf::from(path);
+        if !path.is_absolute() {
+            path = base_path.join(path);
+        }
+        fs::canonicalize(path.clone())
+            .unwrap_or_else(|_| panic!("Cannot find {}", path.display()))
+            .to_string_lossy()
+            .to_string()
+    }
     if let Some(item) = doc.get("canister") {
         for canister in item.as_array_of_tables().unwrap().iter() {
             let canister_id = get_field(canister, "canister_id");
             let name = get_field(canister, "name");
-            let candid = get_field(canister, "candid");
-            let output = get_field(canister, "output");
+            let candid = get_field(canister, "candid").map(|p| resolve_path(base_path, &p));
+            let output = get_field(canister, "output").map(|p| resolve_path(base_path, &p));
             if canister_id.is_none() {
                 if candid.is_none() {
                     return Err(anyhow!(
