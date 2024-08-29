@@ -30,9 +30,10 @@ struct Package {
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct Canister {
-    canister_id: String,
+    canister_id: Option<String>,
     name: Option<String>,
     timestamp: Option<String>,
+    output: Option<String>,
     candid: String,
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -135,7 +136,7 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
         .map(|c| (c.get_key(), c))
         .collect();
     let str = fs::read_to_string(env.get_mops_toml_path())?;
-    let toml = parse_mops_toml(&str)?;
+    let toml = parse_mops_toml(&env.project_root, &str)?;
     let service = mops::Service(mops::CANISTER_ID, agent);
     let bar = create_bar(toml.dependencies.len() + toml.canisters.len());
     bar.set_prefix("Updating mops.lock");
@@ -151,7 +152,7 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
         } else {
             use std::time::SystemTime;
             // TODO handle aaaaa-aa
-            let id = Principal::from_text(&canister.canister_id)?;
+            let id = Principal::from_text(&canister.canister_id.clone().unwrap())?;
             let candid = String::from_utf8(
                 agent
                     .read_state_canister_metadata(id, "candid:service")
@@ -171,6 +172,7 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
         let info = Canister {
             canister_id: canister.canister_id,
             name: canister.name,
+            output: canister.output,
             timestamp,
             candid,
         };
@@ -233,7 +235,8 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
                 }
                 let mut version = None;
                 let dependencies = if let Ok(str) = fetch_file(&repo_info, "mops.toml").await {
-                    let mops = parse_mops_toml(&str)?;
+                    // I hope the base_path here is irrelevant, so we can just use cwd
+                    let mops = parse_mops_toml(Path::new("."), &str)?;
                     version = mops.version;
                     // TODO remove Mops::Local
                     mops.dependencies
@@ -272,7 +275,7 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
                 let mut version = None;
                 let mops = if toml.exists() {
                     let str = fs::read_to_string(toml)?;
-                    let mops = parse_mops_toml(&str)?;
+                    let mops = parse_mops_toml(&canonicalized, &str)?;
                     version = mops.version;
                     mops.dependencies
                 } else {
@@ -375,8 +378,20 @@ pub fn generate_moc_args(env: &Env) -> Result<Vec<String>> {
         if !canisters.is_empty() {
             args.extend_from_slice(&["--actor-idl".to_string(), idl_path.display().to_string()]);
         }
-        for c in canisters {
-            let file = idl_path.join(format!("{}.did", c.canister_id));
+        let (with_id, type_only): (Vec<_>, Vec<_>) =
+            canisters.into_iter().partition(|c| c.canister_id.is_some());
+        for c in type_only {
+            use candid_parser::{bindings::motoko, utils::CandidSource};
+            let candid = Path::new(&c.candid);
+            let output = PathBuf::from(&c.output.unwrap());
+            let (env, actor) = CandidSource::File(candid).load()?;
+            let binding = motoko::compile(&env, &actor);
+            fs::create_dir_all(output.parent().unwrap())?;
+            fs::write(output, binding)?;
+        }
+        for c in with_id {
+            let canister_id = c.canister_id.unwrap();
+            let file = idl_path.join(format!("{}.did", canister_id));
             fs::create_dir_all(file.parent().unwrap())?;
             if c.timestamp.is_none() {
                 let candid = fs::read_to_string(c.candid)?;
@@ -385,7 +400,7 @@ pub fn generate_moc_args(env: &Env) -> Result<Vec<String>> {
                 fs::write(file, c.candid)?;
             }
             if let Some(name) = c.name {
-                args.extend_from_slice(&["--actor-alias".to_string(), name, c.canister_id]);
+                args.extend_from_slice(&["--actor-alias".to_string(), name, canister_id]);
             }
         }
     }
@@ -497,9 +512,10 @@ enum Mops {
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct CanisterInfo {
-    canister_id: String,
+    canister_id: Option<String>,
     name: Option<String>,
     candid: Option<String>,
+    output: Option<String>,
 }
 #[derive(Debug)]
 struct MopsConfig {
@@ -507,7 +523,7 @@ struct MopsConfig {
     dependencies: Vec<Mops>,
     canisters: Vec<CanisterInfo>,
 }
-fn parse_mops_toml(str: &str) -> Result<MopsConfig> {
+fn parse_mops_toml(base_path: &Path, str: &str) -> Result<MopsConfig> {
     let doc = str.parse::<ImDocument<_>>()?;
     let mut mops = Vec::new();
     let mut version = None;
@@ -545,26 +561,43 @@ fn parse_mops_toml(str: &str) -> Result<MopsConfig> {
         }
     }
     let mut canisters = Vec::new();
+    fn get_field(table: &toml_edit::Table, field: &str) -> Option<String> {
+        table
+            .get(field)
+            .map(|f| f.as_value().unwrap().as_str().unwrap().to_string())
+    }
+    fn resolve_path(base_path: &Path, path: &str) -> String {
+        let mut path = PathBuf::from(path);
+        if !path.is_absolute() {
+            path = base_path.join(path);
+        }
+        fs::canonicalize(path.clone())
+            .unwrap_or_else(|_| panic!("Cannot find {}", path.display()))
+            .to_string_lossy()
+            .to_string()
+    }
     if let Some(item) = doc.get("canister") {
         for canister in item.as_array_of_tables().unwrap().iter() {
-            let canister_id = canister
-                .get("canister_id")
-                .ok_or_else(|| anyhow!("canister_id is required"))?
-                .as_value()
-                .unwrap()
-                .as_str()
-                .unwrap()
-                .to_string();
-            let name = canister
-                .get("name")
-                .map(|name| name.as_value().unwrap().as_str().unwrap().to_string());
-            let candid = canister
-                .get("candid")
-                .map(|name| name.as_value().unwrap().as_str().unwrap().to_string());
+            let canister_id = get_field(canister, "canister_id");
+            let name = get_field(canister, "name");
+            let candid = get_field(canister, "candid").map(|p| resolve_path(base_path, &p));
+            let output = get_field(canister, "output").map(|p| resolve_path(base_path, &p));
+            if canister_id.is_none() {
+                if candid.is_none() {
+                    return Err(anyhow!(
+                        "canister_id or candid is required in \"{canister}\""
+                    ));
+                } else if output.is_none() {
+                    return Err(anyhow!("output is required in \"{canister}\""));
+                }
+            } else if output.is_some() {
+                return Err(anyhow!("output is not allowed in \"{canister}\""));
+            }
             canisters.push(CanisterInfo {
                 canister_id,
                 name,
                 candid,
+                output,
             });
         }
     }
@@ -629,7 +662,14 @@ impl Package {
 impl Canister {
     fn get_key(&self) -> String {
         // technically it's self.name.unwrap_or(canister_id). Need to think about the logic for dedup
-        self.name.as_ref().unwrap_or(&self.canister_id).clone()
+        self.name
+            .as_ref()
+            .unwrap_or_else(|| {
+                self.canister_id
+                    .as_ref()
+                    .unwrap_or_else(|| self.output.as_ref().unwrap())
+            })
+            .clone()
     }
     fn no_need_to_update(&self, new: &CanisterInfo) -> bool {
         if self.canister_id != new.canister_id {
@@ -644,7 +684,14 @@ impl Canister {
 }
 impl CanisterInfo {
     fn get_key(&self) -> String {
-        self.name.as_ref().unwrap_or(&self.canister_id).clone()
+        self.name
+            .as_ref()
+            .unwrap_or_else(|| {
+                self.canister_id
+                    .as_ref()
+                    .unwrap_or_else(|| self.output.as_ref().unwrap())
+            })
+            .clone()
     }
 }
 impl Mops {
