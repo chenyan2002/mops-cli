@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
                     download_fmt(&env).await?;
                 }
             } else {
-                unimplemented!();
+                toml::update_packages_from_lock(&agent, &env).await?;
             }
         }
         ClapCommand::Fmt(args) => {

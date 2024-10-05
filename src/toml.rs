@@ -152,7 +152,7 @@ async fn update_mops_lock(agent: &Agent, env: &Env) -> Result<()> {
         } else {
             use std::time::SystemTime;
             // TODO handle aaaaa-aa
-            let id = Principal::from_text(&canister.canister_id.clone().unwrap())?;
+            let id = Principal::from_text(canister.canister_id.clone().unwrap())?;
             let candid = String::from_utf8(
                 agent
                     .read_state_canister_metadata(id, "candid:service")
@@ -405,6 +405,35 @@ pub fn generate_moc_args(env: &Env) -> Result<Vec<String>> {
         }
     }
     Ok(args)
+}
+pub async fn update_packages_from_lock(agent: &Agent, env: &Env) -> Result<()> {
+    let lock = env.get_mops_lock_path();
+    let pkgs = parse_mops_lock(&lock)?.package;
+    let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
+    let pkgs: Vec<_> = pkgs
+        .into_iter()
+        .filter_map(|p| match p.get_type() {
+            PackageType::Mops { .. } => Some((p.name, p.version.unwrap())),
+            _ => None,
+        })
+        .collect();
+    let mut futures = Vec::new();
+    for (name, _) in &pkgs {
+        futures.push(service.get_highest_version(name));
+    }
+    let versions = try_join_all(futures).await?;
+    for (latest, (name, ver)) in versions
+        .into_iter()
+        .map(|v| v.into_result().map_err(Error::msg))
+        .zip(pkgs.into_iter())
+    {
+        let latest = latest?;
+        if latest == ver {
+            continue;
+        }
+        println!("{name}@{ver} -> {latest}");
+    }
+    Ok(())
 }
 pub async fn download_packages_from_lock(agent: &Agent, env: &Env) -> Result<()> {
     let lock = env.get_mops_lock_path();
