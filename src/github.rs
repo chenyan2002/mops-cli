@@ -118,7 +118,7 @@ async fn get_default_branch(repo: &str) -> Result<String> {
     Ok(response.default_branch)
 }
 
-async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
+pub async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
     #[derive(Deserialize)]
     struct Commit {
         sha: String,
@@ -145,7 +145,21 @@ pub async fn get_latest_release_info(repo: &str) -> Result<ReleaseInfo> {
         serde_json::from_str::<ReleaseInfo>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
     Ok(response)
 }
-
+pub async fn get_latest_tag(repo: &str) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{}/tags", repo);
+    let body = github_request(&url).await?;
+    let response: Vec<serde_json::Value> =
+        serde_json::from_str(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
+    if let Some(tag) = response.first() {
+        if let Some(tag_name) = tag.get("name").and_then(|v| v.as_str()) {
+            Ok(tag_name.to_string())
+        } else {
+            Err(anyhow::anyhow!("Tag name not found"))
+        }
+    } else {
+        Err(anyhow::anyhow!("No tags found in the repo {repo}"))
+    }
+}
 async fn get_file_list(repo: &RepoInfo) -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Tree {

@@ -1,5 +1,8 @@
 use crate::build::MotokoImport;
-use crate::github::{download_github_package, fetch_file, parse_github_url, RepoInfo};
+use crate::github::{
+    download_github_package, fetch_file, get_latest_commit, get_latest_tag, parse_github_url,
+    RepoInfo,
+};
 use crate::{
     env::Env,
     mops, storage,
@@ -410,30 +413,51 @@ pub async fn update_packages_from_lock(agent: &Agent, env: &Env) -> Result<()> {
     let lock = env.get_mops_lock_path();
     let pkgs = parse_mops_lock(&lock)?.package;
     let service = Rc::new(mops::Service(mops::CANISTER_ID, agent));
-    let pkgs: Vec<_> = pkgs
-        .into_iter()
-        .filter_map(|p| match p.get_type() {
-            PackageType::Mops { .. } => Some((p.name, p.version.unwrap())),
-            _ => None,
-        })
-        .collect();
     let mut futures = Vec::new();
-    for (name, _) in &pkgs {
-        futures.push(service.get_highest_version(name));
+    for pkg in pkgs {
+        futures.push(get_latest_package_version(service.clone(), pkg));
     }
-    let versions = try_join_all(futures).await?;
-    for (latest, (name, ver)) in versions
-        .into_iter()
-        .map(|v| v.into_result().map_err(Error::msg))
-        .zip(pkgs.into_iter())
-    {
-        let latest = latest?;
-        if latest == ver {
-            continue;
-        }
-        println!("{name}@{ver} -> {latest}");
+    let versions = try_join_all(futures).await?.into_iter().flatten();
+    for ver in versions {
+        println!("{}@{} -> {}", ver.0, ver.1, ver.2);
     }
     Ok(())
+}
+async fn get_latest_package_version(
+    service: Rc<mops::Service<'_>>,
+    pkg: Package,
+) -> Result<Option<(String, String, String)>> {
+    match pkg.get_type() {
+        PackageType::Mops { .. } => {
+            let latest = service
+                .get_highest_version(&pkg.name)
+                .await?
+                .into_result()
+                .map_err(Error::msg)?;
+            let ver = pkg.version.unwrap();
+            Ok(if latest == ver {
+                None
+            } else {
+                Some((pkg.name, ver, latest))
+            })
+        }
+        PackageType::Repo(info) => {
+            let latest = get_latest_tag(&info.repo).await?;
+            let tag = info.tag.clone();
+            Ok(if latest == tag {
+                let cur_commit = info.commit.clone();
+                let latest = get_latest_commit(&info.repo, &info.tag).await?;
+                if cur_commit == latest {
+                    None
+                } else {
+                    Some((pkg.name, cur_commit, latest))
+                }
+            } else {
+                Some((pkg.name, tag, latest))
+            })
+        }
+        PackageType::Local(_) => Ok(None),
+    }
 }
 pub async fn download_packages_from_lock(agent: &Agent, env: &Env) -> Result<()> {
     let lock = env.get_mops_lock_path();
