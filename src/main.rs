@@ -85,16 +85,14 @@ async fn main() -> Result<()> {
         }
         ClapCommand::Update(args) => {
             if args.moc {
-                use crate::env::{download_fmt, download_moc};
-                if env.check_version("moc", "dfinity/motoko").await.is_none() {
-                    download_moc(&env).await?;
-                }
+                use crate::env::download_fmt;
+                env.update_moc(true).await?;
                 if env
                     .check_version("mo-fmt", "dfinity/prettier-plugin-motoko")
                     .await
                     .is_none()
                 {
-                    download_fmt(&env).await?;
+                    download_fmt(&env, None).await?;
                 }
             } else {
                 toml::update_packages_from_lock(&agent, &env).await?;

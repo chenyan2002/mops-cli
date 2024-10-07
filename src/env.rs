@@ -1,9 +1,10 @@
-use crate::github::get_latest_release_info;
+use crate::github::{get_latest_release_info, get_latest_release_version};
 use crate::utils::create_spinner_bar;
 use anyhow::{anyhow, Result};
 use console::style;
 use flate2::read::GzDecoder;
 use indicatif::HumanBytes;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,20 +13,21 @@ use tar::Archive;
 pub struct Env {
     pub cache_dir: PathBuf,
     pub project_root: PathBuf,
+    pub toolchain: BTreeMap<String, String>,
 }
 impl Env {
     pub async fn new(cache_dir: &Option<PathBuf>) -> Result<Self> {
         let cache_dir = get_cache_dir(cache_dir)?;
         let project_root = find_project_root()?;
-        let res = Self {
+        let mut res = Self {
             cache_dir,
             project_root,
+            toolchain: BTreeMap::new(),
         };
-        if !res.get_moc_path().exists() {
-            download_moc(&res).await?;
-        }
+        res.get_toolchain()?;
+        res.update_moc(false).await?;
         if !res.get_fmt_path().exists() {
-            download_fmt(&res).await?;
+            download_fmt(&res, None).await?;
         }
         Ok(res)
     }
@@ -57,11 +59,65 @@ impl Env {
     pub fn get_moc(&self) -> Command {
         Command::new(self.get_moc_path())
     }
+    pub fn get_moc_version(&self) -> Result<String> {
+        let mut cmd = self.get_moc();
+        cmd.arg("--version");
+        let version = crate::utils::exec(cmd, true, None)?;
+        version
+            .split_whitespace()
+            .nth(2)
+            .map(|x| x.to_owned())
+            .ok_or_else(|| {
+                anyhow!("Cannot get moc version, please check if moc is installed correctly.")
+            })
+    }
+    pub async fn update_moc(&self, check_latest: bool) -> Result<()> {
+        let expect_ver = match self.toolchain.get("moc") {
+            Some(v) => Some(v.clone()),
+            None => {
+                if check_latest {
+                    get_latest_release_version("dfinity/motoko").await.ok()
+                } else {
+                    None
+                }
+            }
+        };
+        let needs_update = if self.get_moc_path().exists() {
+            if let Ok(cur_ver) = &self.get_moc_version() {
+                expect_ver.as_ref().is_some_and(|v| v != cur_ver)
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+        if needs_update {
+            download_moc(self, expect_ver).await?;
+        }
+        Ok(())
+    }
     pub fn get_fmt_path(&self) -> PathBuf {
         self.get_binary_path().join("mo-fmt")
     }
     pub fn get_fmt(&self) -> Command {
         Command::new(self.get_fmt_path())
+    }
+    fn get_toolchain(&mut self) -> Result<()> {
+        let toml = self.get_mops_toml_path();
+        if toml.exists() {
+            let toml = std::fs::read_to_string(toml)?;
+            let toml = toml.parse::<toml_edit::ImDocument<_>>()?;
+            if let Some(toolchain) = toml.get("toolchain") {
+                if let Some(toolchain) = toolchain.as_table() {
+                    for (k, v) in toolchain {
+                        if let Some(v) = v.as_str() {
+                            self.toolchain.insert(k.to_owned(), v.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
     pub async fn check_version(&self, bin: &str, repo: &str) -> Option<()> {
         let path = self.get_binary_path().join(bin);
@@ -73,10 +129,7 @@ impl Env {
                 .trim()
                 .trim()
                 .to_owned();
-            let tag = crate::github::get_latest_release_info(repo)
-                .await
-                .ok()?
-                .tag_name;
+            let tag = get_latest_release_info(repo).await.ok()?.tag_name;
             let tag = if let Some(tag) = tag.strip_prefix('v') {
                 tag
             } else {
@@ -145,7 +198,7 @@ fn guess_build_name(main_file: &PathBuf) -> Option<String> {
     })
 }
 
-pub async fn download_moc(env: &Env) -> Result<()> {
+pub async fn download_moc(env: &Env, expect_ver: Option<String>) -> Result<()> {
     let platform = if cfg!(target_os = "macos") {
         "Darwin"
     } else if cfg!(target_os = "linux") {
@@ -153,11 +206,16 @@ pub async fn download_moc(env: &Env) -> Result<()> {
     } else {
         anyhow::bail!("Unsupported platform");
     };
-    let url = "https://github.com/dfinity/motoko/releases/download/{tag}/motoko-{platform}-x86_64-{tag}.tar.gz";
-    download_release(env, "moc", "dfinity/motoko", url, platform).await?;
+    let tag = if let Some(v) = expect_ver {
+        v
+    } else {
+        get_latest_release_version("dfinity/motoko").await?
+    };
+    let url = format!("https://github.com/dfinity/motoko/releases/download/{tag}/motoko-{platform}-x86_64-{tag}.tar.gz");
+    download_release(env, "moc", &url, &tag).await?;
     Ok(())
 }
-pub async fn download_fmt(env: &Env) -> Result<()> {
+pub async fn download_fmt(env: &Env, expect_ver: Option<String>) -> Result<()> {
     let platform = if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(target_os = "linux") {
@@ -165,50 +223,35 @@ pub async fn download_fmt(env: &Env) -> Result<()> {
     } else {
         anyhow::bail!("Unsupported platform");
     };
-    let url = "https://github.com/dfinity/prettier-plugin-motoko/releases/download/{tag}/mo-fmt-{platform}.tar.gz";
-    download_release(
-        env,
-        "mo-fmt",
-        "dfinity/prettier-plugin-motoko",
-        url,
-        platform,
-    )
-    .await?;
+    let tag = if let Some(v) = expect_ver {
+        v
+    } else {
+        get_latest_release_version("dfinity/prettier-plugin-motoko").await?
+    };
+    let url = format!("https://github.com/dfinity/prettier-plugin-motoko/releases/download/v{tag}/mo-fmt-{platform}.tar.gz");
+    download_release(env, "mo-fmt", &url, &tag).await?;
     Ok(())
 }
 
-async fn download_release(
-    env: &Env,
-    name: &str,
-    repo: &str,
-    url: &str,
-    platform: &str,
-) -> Result<()> {
+async fn download_release(env: &Env, name: &str, url: &str, ver: &str) -> Result<()> {
     use std::io::Write;
-    let bar = create_spinner_bar(format!("Downloading {}", repo));
-    let info = get_latest_release_info(repo).await?;
-    let tag = &info.tag_name;
-    bar.set_message(format!("Downloading {name} {tag}"));
-    let url = url.replace("{tag}", tag).replace("{platform}", platform);
-    if let Some(size) = info.get_asset_size(&url) {
-        bar.set_message(format!("Downloading {name} {tag} ({})", HumanBytes(size)));
-    }
+    let bar = create_spinner_bar(format!("Downloading {name} {ver}"));
     let response = reqwest::get(url).await?;
     let gz_file = env
         .get_binary_path()
-        .join(format!("{}-{}.tar.gz", name, tag));
+        .join(format!("{}-{}.tar.gz", name, ver));
     fs::create_dir_all(gz_file.parent().unwrap())?;
     let mut file = File::create(&gz_file)?;
     let content = response.bytes().await?;
     file.write_all(&content)?;
-    bar.set_message(format!("Decompressing {name} {tag}"));
+    bar.set_message(format!("Decompressing {name} {ver}"));
     let gz = File::open(&gz_file)?;
     let tar = GzDecoder::new(gz);
     let mut archive = Archive::new(tar);
     archive.unpack(env.get_binary_path())?;
     fs::remove_file(&gz_file)?;
     bar.set_message(format!(
-        "{:>12} {name} {tag}",
+        "{:>12} {name} {ver}",
         style("Installed").green().bold()
     ));
     bar.finish();

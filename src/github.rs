@@ -197,10 +197,16 @@ async fn github_request(url: &str) -> Result<String> {
     let body = response.text().await?;
     Ok(body)
 }
-pub fn guess_version_from_tag(tag: &str) -> Option<Version> {
+fn guess_version_from_tag(tag: &str) -> Option<Version> {
     let idx = tag.find(|c: char| c.is_ascii_digit())?;
     let maybe = &tag[idx..];
     maybe.parse::<Version>().ok()
+}
+pub async fn get_latest_release_version(repo: &str) -> Result<String> {
+    let tag = get_latest_release_info(repo).await?.tag_name;
+    guess_version_from_tag(&tag)
+        .map(|v| v.to_string())
+        .ok_or_else(|| anyhow::anyhow!("invalid version"))
 }
 impl RepoInfo {
     pub fn get_done_file(&self) -> String {

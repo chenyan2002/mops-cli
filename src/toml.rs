@@ -67,6 +67,23 @@ pub async fn update_mops_toml(
     let mut unknown_libs = Vec::new();
     for lib in libs {
         match lib {
+            MotokoImport::Lib(lib) if lib == "base" && env.toolchain.contains_key("moc") => {
+                let moc_ver = env.toolchain.get("moc").unwrap();
+                if let Some(ver) = doc["dependencies"].get("base").map(|v| v.as_str().unwrap()) {
+                    if ver != moc_ver {
+                        println(
+                            None,
+                            "stderr",
+                            &format!(
+                                "{:>12} mops.toml with base = {ver}, which is different from toolchain.moc version {moc_ver}",
+                                style("[Warning]").red().bold()
+                            ),
+                        );
+                    }
+                } else {
+                    doc["dependencies"]["base"] = value(moc_ver);
+                }
+            }
             MotokoImport::Lib(lib) => {
                 if doc["dependencies"].get(&lib).is_some() {
                     continue;
