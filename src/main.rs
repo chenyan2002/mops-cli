@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 
+mod binary_cache;
 mod build;
 mod env;
 mod github;
@@ -76,7 +77,7 @@ async fn main() -> Result<()> {
         .build()?;
     match opts.cmd {
         ClapCommand::Moc(args) => {
-            let mut moc = env.get_moc();
+            let mut moc = env.binary["moc"].get_cmd();
             moc.args(&args.extra_args);
             exec(moc, false, None)?;
         }
@@ -85,21 +86,15 @@ async fn main() -> Result<()> {
         }
         ClapCommand::Update(args) => {
             if args.moc {
-                use crate::env::download_fmt;
-                env.update_moc(true).await?;
-                if env
-                    .check_version("mo-fmt", "dfinity/prettier-plugin-motoko")
-                    .await
-                    .is_none()
-                {
-                    download_fmt(&env, None).await?;
+                for bin in env.binary.values() {
+                    bin.update_binary(true).await?;
                 }
             } else {
                 toml::update_packages_from_lock(&agent, &env).await?;
             }
         }
         ClapCommand::Fmt(args) => {
-            let mut fmt = env.get_fmt();
+            let mut fmt = env.binary["mo-fmt"].get_cmd();
             fmt.args(&args.extra_args);
             exec(fmt, false, None)?;
         }

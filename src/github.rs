@@ -138,7 +138,7 @@ pub struct Asset {
     pub size: u64,
     pub browser_download_url: String,
 }
-pub async fn get_latest_release_info(repo: &str) -> Result<ReleaseInfo> {
+async fn get_latest_release_info(repo: &str) -> Result<ReleaseInfo> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
     let body = github_request(&url).await?;
     let response =
@@ -217,6 +217,7 @@ impl RepoInfo {
     }
 }
 impl ReleaseInfo {
+    #[allow(dead_code)]
     pub fn get_asset_size(&self, url: &str) -> Option<u64> {
         self.assets
             .iter()
