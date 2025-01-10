@@ -1,32 +1,41 @@
-use crate::github::get_latest_release_info;
-use crate::utils::create_spinner_bar;
+use crate::binary_cache::*;
 use anyhow::{anyhow, Result};
-use console::style;
-use flate2::read::GzDecoder;
-use indicatif::HumanBytes;
-use std::fs::{self, File};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use tar::Archive;
 
 pub struct Env {
     pub cache_dir: PathBuf,
     pub project_root: PathBuf,
+    pub toolchain: BTreeMap<String, String>,
+    pub binary: BTreeMap<String, Box<dyn Binary>>,
 }
 impl Env {
     pub async fn new(cache_dir: &Option<PathBuf>) -> Result<Self> {
         let cache_dir = get_cache_dir(cache_dir)?;
         let project_root = find_project_root()?;
-        let res = Self {
+        let mut res = Self {
             cache_dir,
             project_root,
+            toolchain: BTreeMap::new(),
+            binary: BTreeMap::new(),
         };
-        if !res.get_moc_path().exists() {
-            download_moc(&res).await?;
-        }
-        if !res.get_fmt_path().exists() {
-            download_fmt(&res).await?;
-        }
+        res.get_toolchain()?;
+        res.binary.insert(
+            "moc".to_owned(),
+            Box::new(Moc {
+                binary_path: res.get_binary_path(),
+                expect_version: res.toolchain.get("moc").cloned(),
+            }),
+        );
+        res.binary.insert(
+            "mo-fmt".to_owned(),
+            Box::new(Fmt {
+                binary_path: res.get_binary_path(),
+                expect_version: res.toolchain.get("mo-fmt").cloned(),
+            }),
+        );
+        res.binary["moc"].update_binary(false).await?;
+        res.binary["mo-fmt"].update_binary(false).await?;
         Ok(res)
     }
     pub fn get_mops_toml_path(&self) -> PathBuf {
@@ -51,47 +60,22 @@ impl Env {
     pub fn get_binary_path(&self) -> PathBuf {
         self.cache_dir.join("bin")
     }
-    pub fn get_moc_path(&self) -> PathBuf {
-        self.get_binary_path().join("moc")
-    }
-    pub fn get_moc(&self) -> Command {
-        Command::new(self.get_moc_path())
-    }
-    pub fn get_fmt_path(&self) -> PathBuf {
-        self.get_binary_path().join("mo-fmt")
-    }
-    pub fn get_fmt(&self) -> Command {
-        Command::new(self.get_fmt_path())
-    }
-    pub async fn check_version(&self, bin: &str, repo: &str) -> Option<()> {
-        let path = self.get_binary_path().join(bin);
-        if path.exists() {
-            let mut cmd = Command::new(path);
-            cmd.arg("--version");
-            let version = crate::utils::exec(cmd, true, None)
-                .ok()?
-                .trim()
-                .trim()
-                .to_owned();
-            let tag = crate::github::get_latest_release_info(repo)
-                .await
-                .ok()?
-                .tag_name;
-            let tag = if let Some(tag) = tag.strip_prefix('v') {
-                tag
-            } else {
-                &tag
-            };
-            if version.contains(tag) {
-                println!("{version} is up to date.");
-                Some(())
-            } else {
-                println!("{version}\nLatest release: {tag}");
-                None
+    fn get_toolchain(&mut self) -> Result<()> {
+        let toml = self.get_mops_toml_path();
+        if toml.exists() {
+            let toml = std::fs::read_to_string(toml)?;
+            let toml = toml.parse::<toml_edit::ImDocument<_>>()?;
+            if let Some(toolchain) = toml.get("toolchain") {
+                if let Some(toolchain) = toolchain.as_table() {
+                    for (k, v) in toolchain {
+                        if let Some(v) = v.as_str() {
+                            self.toolchain.insert(k.to_owned(), v.to_owned());
+                        }
+                    }
+                }
             }
-        } else {
-            None
         }
+        Ok(())
     }
 }
 
@@ -143,74 +127,4 @@ fn guess_build_name(main_file: &PathBuf) -> Option<String> {
     } else {
         stem.to_str()?.to_owned()
     })
-}
-
-pub async fn download_moc(env: &Env) -> Result<()> {
-    let platform = if cfg!(target_os = "macos") {
-        "Darwin"
-    } else if cfg!(target_os = "linux") {
-        "Linux"
-    } else {
-        anyhow::bail!("Unsupported platform");
-    };
-    let url = "https://github.com/dfinity/motoko/releases/download/{tag}/motoko-{platform}-x86_64-{tag}.tar.gz";
-    download_release(env, "moc", "dfinity/motoko", url, platform).await?;
-    Ok(())
-}
-pub async fn download_fmt(env: &Env) -> Result<()> {
-    let platform = if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else {
-        anyhow::bail!("Unsupported platform");
-    };
-    let url = "https://github.com/dfinity/prettier-plugin-motoko/releases/download/{tag}/mo-fmt-{platform}.tar.gz";
-    download_release(
-        env,
-        "mo-fmt",
-        "dfinity/prettier-plugin-motoko",
-        url,
-        platform,
-    )
-    .await?;
-    Ok(())
-}
-
-async fn download_release(
-    env: &Env,
-    name: &str,
-    repo: &str,
-    url: &str,
-    platform: &str,
-) -> Result<()> {
-    use std::io::Write;
-    let bar = create_spinner_bar(format!("Downloading {}", repo));
-    let info = get_latest_release_info(repo).await?;
-    let tag = &info.tag_name;
-    bar.set_message(format!("Downloading {name} {tag}"));
-    let url = url.replace("{tag}", tag).replace("{platform}", platform);
-    if let Some(size) = info.get_asset_size(&url) {
-        bar.set_message(format!("Downloading {name} {tag} ({})", HumanBytes(size)));
-    }
-    let response = reqwest::get(url).await?;
-    let gz_file = env
-        .get_binary_path()
-        .join(format!("{}-{}.tar.gz", name, tag));
-    fs::create_dir_all(gz_file.parent().unwrap())?;
-    let mut file = File::create(&gz_file)?;
-    let content = response.bytes().await?;
-    file.write_all(&content)?;
-    bar.set_message(format!("Decompressing {name} {tag}"));
-    let gz = File::open(&gz_file)?;
-    let tar = GzDecoder::new(gz);
-    let mut archive = Archive::new(tar);
-    archive.unpack(env.get_binary_path())?;
-    fs::remove_file(&gz_file)?;
-    bar.set_message(format!(
-        "{:>12} {name} {tag}",
-        style("Installed").green().bold()
-    ));
-    bar.finish();
-    Ok(())
 }

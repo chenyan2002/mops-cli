@@ -118,7 +118,7 @@ async fn get_default_branch(repo: &str) -> Result<String> {
     Ok(response.default_branch)
 }
 
-async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
+pub async fn get_latest_commit(repo: &str, tag: &str) -> Result<String> {
     #[derive(Deserialize)]
     struct Commit {
         sha: String,
@@ -138,14 +138,28 @@ pub struct Asset {
     pub size: u64,
     pub browser_download_url: String,
 }
-pub async fn get_latest_release_info(repo: &str) -> Result<ReleaseInfo> {
+async fn get_latest_release_info(repo: &str) -> Result<ReleaseInfo> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
     let body = github_request(&url).await?;
     let response =
         serde_json::from_str::<ReleaseInfo>(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
     Ok(response)
 }
-
+pub async fn get_latest_tag(repo: &str) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{}/tags", repo);
+    let body = github_request(&url).await?;
+    let response: Vec<serde_json::Value> =
+        serde_json::from_str(&body).map_err(|_| anyhow::anyhow!("{body}"))?;
+    if let Some(tag) = response.first() {
+        if let Some(tag_name) = tag.get("name").and_then(|v| v.as_str()) {
+            Ok(tag_name.to_string())
+        } else {
+            Err(anyhow::anyhow!("Tag name not found"))
+        }
+    } else {
+        Err(anyhow::anyhow!("No tags found in the repo {repo}"))
+    }
+}
 async fn get_file_list(repo: &RepoInfo) -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Tree {
@@ -183,21 +197,27 @@ async fn github_request(url: &str) -> Result<String> {
     let body = response.text().await?;
     Ok(body)
 }
+fn guess_version_from_tag(tag: &str) -> Option<Version> {
+    let idx = tag.find(|c: char| c.is_ascii_digit())?;
+    let maybe = &tag[idx..];
+    maybe.parse::<Version>().ok()
+}
+pub async fn get_latest_release_version(repo: &str) -> Result<String> {
+    let tag = get_latest_release_info(repo).await?.tag_name;
+    guess_version_from_tag(&tag)
+        .map(|v| v.to_string())
+        .ok_or_else(|| anyhow::anyhow!("invalid version"))
+}
 impl RepoInfo {
     pub fn get_done_file(&self) -> String {
         format!("DONE-{}", self.base_dir.replace('/', "-"))
     }
     pub fn guess_version(&self) -> Option<String> {
-        let idx = self.tag.find(|c: char| c.is_ascii_digit())?;
-        let maybe = &self.tag[idx..];
-        if maybe.parse::<Version>().is_ok() {
-            Some(maybe.to_string())
-        } else {
-            None
-        }
+        guess_version_from_tag(&self.tag).map(|v| v.to_string())
     }
 }
 impl ReleaseInfo {
+    #[allow(dead_code)]
     pub fn get_asset_size(&self, url: &str) -> Option<u64> {
         self.assets
             .iter()

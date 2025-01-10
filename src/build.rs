@@ -26,7 +26,7 @@ pub async fn build(agent: &Agent, env: &Env, args: crate::BuildArg) -> Result<()
     let pkgs = generate_moc_args(env)?;
     let msg = format!("{:>12} {}", style("Compiling").cyan(), main_file.display());
     let bar = create_spinner_bar(msg);
-    let mut moc = env.get_moc();
+    let mut moc = env.binary["moc"].get_cmd();
     moc.arg(&main_file).args(pkgs);
     if !args.extra_args.contains(&"-o".to_string()) {
         let output = env.get_target_build_path(&args.name, &main_file);
@@ -84,7 +84,7 @@ fn get_imports(main_path: &Path, env: &Env, display_src: bool) -> Result<BTreeSe
             return Ok(());
         }
         result.insert(MotokoImport::Local(file.to_path_buf()));
-        let mut command = env.get_moc();
+        let mut command = env.binary["moc"].get_cmd();
         command.arg("--print-deps").arg(file);
         if display_src {
             command.arg("--print-source-on-error");
